@@ -1,0 +1,108 @@
+[package]
+name = "eatsome-printer-daemon"
+version = "1.0.0"
+description = "Eatsome Printer Service - Tauri Edition"
+authors = ["Eatsome B.V."]
+license = "MIT"
+repository = "https://github.com/eatsome/printer-daemon"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = ["protocol-asset", "tray-icon"] }
+tauri-plugin-shell = "2.0"
+tauri-plugin-store = "2.0"
+tauri-plugin-updater = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.35", features = ["full"] }
+tokio-rusqlite = "0.5"
+rusqlite = { version = "0.31", features = ["bundled-sqlcipher"] }
+
+# Supabase / WebSocket (using standard libraries)
+# Note: supabase-realtime-rs doesn't exist on crates.io, using direct WebSocket
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+futures-util = "0.3"
+url = "2.5"
+
+# HTTP Client (for Supabase REST API)
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+
+# USB Printing
+rusb = "0.9"
+hidapi = "2.6"
+
+# Bluetooth BLE
+btleplug = "0.11"
+
+# ESC/POS Commands
+# Note: Using default features only - optional deps don't auto-create features in Cargo 2021
+escpos = "0.17"
+qrcode = "0.14"
+image = "0.25"
+
+# mDNS/Zeroconf Discovery
+mdns-sd = "0.11"
+
+# SNMP Discovery
+snmp2 = "0.3"
+
+# Retry Logic
+backon = "1.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Crash Reporting
+sentry = { version = "0.34", features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
+sentry-tracing = "0.34"
+
+# HTTP Server (for fallback API)
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Authentication
+jsonwebtoken = "9.2"
+
+# Cryptography
+sha2 = "0.10"
+pbkdf2 = { version = "0.12", features = ["simple"] }
+hex = "0.4"
+md5 = "0.7"
+regex = "1.10"
+
+# Utilities
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+thiserror = "1.0"
+dirs = "5.0"
+base64 = "0.21"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS-specific USB entitlements handled via Tauri config
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows-specific dependencies if needed
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Linux-specific dependencies if needed
+
+[dev-dependencies]
+# Testing
+tokio-test = "0.4"
+mockall = "0.12"
+wiremock = "0.6"
+tempfile = "3.8"
+pretty_assertions = "1.4"
+serial_test = "3.0"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
