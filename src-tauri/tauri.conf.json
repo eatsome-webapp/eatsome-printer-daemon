@@ -98,7 +98,7 @@
         "https://github.com/eatsome-webapp/eatsome-printer-daemon/releases/latest/download/latest.json"
       ],
       "dialog": false,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhFNzk1REZGMUE1N0Q5M0UKUldRKzJWY2EvMTE1amtSYWlkM1FiTHNnbERma0RMbWxvL0h3Z1B1Q3UyZlFDWkMvZ2hrSHNNb3oK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI0ODVDODM3Qjk1MkNBRkMKUldUOHlsSzVOOGlGdEVTRnlPUUpld1ZicFJFZjFhTk5sRW1KQjVhZTRpNWM3bnpRdGlna3lHdloK",
       "windows": {
         "installMode": "passive"
       }
