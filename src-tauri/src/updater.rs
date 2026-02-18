@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::interval;
 use tracing::{info, warn, error};
-use tauri::{AppHandle, Manager, Emitter};
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
 use crate::queue::QueueManager;
@@ -153,6 +153,7 @@ impl UpdateChecker {
     }
 
     /// Get time since last check
+    #[allow(dead_code)] // Admin utility for monitoring
     pub async fn time_since_last_check(&self) -> Option<Duration> {
         let last_check = self.last_check.lock().await;
         last_check.map(|instant| instant.elapsed())

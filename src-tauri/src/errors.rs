@@ -8,6 +8,7 @@ pub enum DaemonError {
     #[error("Printer not found: {0}")]
     PrinterNotFound(String),
 
+    #[allow(dead_code)] // Infrastructure: used by circuit breaker when printer connectivity is checked
     #[error("Printer offline: {0}")]
     PrinterOffline(String),
 
@@ -25,9 +26,6 @@ pub enum DaemonError {
 
     #[error("Database error: {0}")]
     Database(#[from] tokio_rusqlite::Error),
-
-    #[error("Realtime connection error: {0}")]
-    Realtime(String),
 
     #[error("Queue error: {0}")]
     Queue(String),

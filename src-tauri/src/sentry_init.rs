@@ -1,8 +1,26 @@
+use once_cell::sync::Lazy;
+use regex::Regex;
 use sentry::{ClientInitGuard, ClientOptions};
-use sentry_tracing::EventFilter;
 use std::env;
 use std::sync::Arc;
-use tracing::Level;
+
+// Pre-compiled regex patterns for PII stripping (compiled once, used many times)
+static EMAIL_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+        .expect("Invalid email regex pattern")
+});
+static PHONE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\+?[1-9]\d{1,14}")
+        .expect("Invalid phone regex pattern")
+});
+static UUID_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+        .expect("Invalid UUID regex pattern")
+});
+static JWT_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+        .expect("Invalid JWT regex pattern")
+});
 
 /// Initialize Sentry crash reporting
 ///
@@ -16,12 +34,13 @@ use tracing::Level;
 /// Returns `Some(ClientInitGuard)` if Sentry is configured, `None` otherwise.
 /// The guard MUST be kept alive for the lifetime of the application.
 pub fn init() -> Option<ClientInitGuard> {
-    let dsn = env::var("SENTRY_DSN").ok();
-
-    if dsn.is_none() || dsn.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
-        log::info!("Sentry DSN not configured - crash reporting disabled");
-        return None;
-    }
+    let dsn = match env::var("SENTRY_DSN").ok() {
+        Some(d) if !d.is_empty() => d,
+        _ => {
+            log::info!("Sentry DSN not configured - crash reporting disabled");
+            return None;
+        }
+    };
 
     let environment = env::var("SENTRY_ENVIRONMENT").unwrap_or_else(|_| "development".to_string());
     let release = env::var("SENTRY_RELEASE").unwrap_or_else(|_| {
@@ -33,7 +52,7 @@ pub fn init() -> Option<ClientInitGuard> {
         .unwrap_or(0.1);
 
     let guard = sentry::init((
-        dsn.unwrap(),
+        dsn,
         ClientOptions {
             release: Some(release.into()),
             environment: Some(environment.into()),
@@ -45,16 +64,9 @@ pub fn init() -> Option<ClientInitGuard> {
         },
     ));
 
-    // Integrate with tracing
-    // TODO: Add sentry layer to existing tracing subscriber in main.rs
-    // let _sentry_layer = sentry_tracing::layer().event_filter(|md| match *md.level() {
-    //     Level::ERROR => EventFilter::Event,
-    //     Level::WARN => EventFilter::Breadcrumb,
-    //     _ => EventFilter::Ignore,
-    // });
     log::info!(
         "Sentry crash reporting initialized (environment: {})",
-        guard.options().environment.as_ref().unwrap()
+        guard.options().environment.as_deref().unwrap_or("unknown")
     );
 
     Some(guard)
@@ -108,21 +120,17 @@ fn before_send_filter(mut event: sentry::protocol::Event<'static>) -> Option<sen
 fn strip_pii_from_message(message: &str) -> String {
     let mut cleaned = message.to_string();
 
-    // Strip email addresses
-    let email_regex = regex::Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap();
-    cleaned = email_regex.replace_all(&cleaned, "[EMAIL_REDACTED]").to_string();
+    // Strip email addresses (using pre-compiled regex)
+    cleaned = EMAIL_REGEX.replace_all(&cleaned, "[EMAIL_REDACTED]").to_string();
 
-    // Strip phone numbers (international format)
-    let phone_regex = regex::Regex::new(r"\+?[1-9]\d{1,14}").unwrap();
-    cleaned = phone_regex.replace_all(&cleaned, "[PHONE_REDACTED]").to_string();
-
-    // Strip UUIDs (restaurant IDs, order IDs, etc.)
-    let uuid_regex = regex::Regex::new(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}").unwrap();
-    cleaned = uuid_regex.replace_all(&cleaned, "[UUID_REDACTED]").to_string();
+    // Strip UUIDs before phone numbers (phone regex is greedy and would mangle UUIDs)
+    cleaned = UUID_REGEX.replace_all(&cleaned, "[UUID_REDACTED]").to_string();
 
     // Strip JWT tokens
-    let jwt_regex = regex::Regex::new(r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+").unwrap();
-    cleaned = jwt_regex.replace_all(&cleaned, "[JWT_REDACTED]").to_string();
+    cleaned = JWT_REGEX.replace_all(&cleaned, "[JWT_REDACTED]").to_string();
+
+    // Strip phone numbers last (international format — greedy pattern)
+    cleaned = PHONE_REGEX.replace_all(&cleaned, "[PHONE_REDACTED]").to_string();
 
     cleaned
 }

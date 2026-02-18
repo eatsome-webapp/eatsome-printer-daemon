@@ -1,13 +1,11 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import WelcomeStep from './wizard/WelcomeStep'
-import AuthenticationStep from './wizard/AuthenticationStep'
-import DiscoveryStep from './wizard/DiscoveryStep'
-import AssignmentStep from './wizard/AssignmentStep'
-import CompleteStep from './wizard/CompleteStep'
+import { Check } from 'lucide-react'
+import ConnectStep from './wizard/ConnectStep'
+import SuccessStep from './wizard/SuccessStep'
 import './SetupWizard.css'
 
-type WizardStep = 'welcome' | 'auth' | 'discovery' | 'assignment' | 'complete'
+type WizardStep = 'connect' | 'success'
 
 interface SetupWizardProps {
   onComplete: () => void
@@ -22,62 +20,36 @@ export interface DiscoveredPrinter {
   capabilities?: any
 }
 
-export interface PrinterAssignment {
-  printer: DiscoveredPrinter
-  station: string
-  isPrimary: boolean
-}
-
 export default function SetupWizard({ onComplete }: SetupWizardProps) {
-  const [currentStep, setCurrentStep] = useState<WizardStep>('welcome')
-  const [_authToken, setAuthToken] = useState<string>('')
+  const [currentStep, setCurrentStep] = useState<WizardStep>('connect')
   const [restaurantId, setRestaurantId] = useState<string>('')
   const [discoveredPrinters, setDiscoveredPrinters] = useState<DiscoveredPrinter[]>([])
-  const [assignments, setAssignments] = useState<PrinterAssignment[]>([])
 
-  const handleWelcomeNext = () => {
-    setCurrentStep('auth')
-  }
-
-  const handleAuthComplete = async (token: string, resId: string) => {
-    setAuthToken(token)
+  const handleConnectComplete = async (token: string, resId: string) => {
     setRestaurantId(resId)
 
-    // Save authentication to config
     try {
+      // Save auth to config
       const config = await invoke<any>('get_config')
-      config.auth_token = token
-      config.restaurant_id = resId
+      config.auth_token = token // printer_service_secret for pairing verification
+      config.restaurant_id = resId // restaurant_code like "W434N" — resolved to UUID by backend
       await invoke('save_config', { config })
-      setCurrentStep('discovery')
-    } catch (error) {
-      console.error('Failed to save auth config:', error)
-      alert(`Failed to save configuration: ${error}`)
-    }
-  }
 
-  const handleDiscoveryComplete = (printers: DiscoveredPrinter[]) => {
-    setDiscoveredPrinters(printers)
-    setCurrentStep('assignment')
-  }
+      // Auto-discover printers
+      const printers = await invoke<DiscoveredPrinter[]>('discover_printers')
+      setDiscoveredPrinters(printers)
 
-  const handleAssignmentComplete = async (assignments: PrinterAssignment[]) => {
-    setAssignments(assignments)
-
-    // Save printer assignments to config
-    try {
-      const config = await invoke<any>('get_config')
-
-      // Convert assignments to printer configs
-      config.printers = assignments.map((a) => ({
-        id: a.printer.id,
-        name: a.printer.name,
-        connection_type: a.printer.connection_type,
-        address: a.printer.address,
+      // Save printers to config
+      config.printers = printers.map((p) => ({
+        id: p.id,
+        name: p.name,
+        connection_type: p.connection_type.toLowerCase(), // Rust enum expects lowercase
+        address: p.address,
         protocol: 'escpos',
-        station: a.station,
-        is_primary: a.isPrimary,
-        capabilities: a.printer.capabilities || {
+        station: null, // Option<String> in Rust - null instead of empty string
+        is_primary: false,
+        capabilities: {
+          // Always use default capabilities to ensure all required fields exist
           cutter: true,
           drawer: false,
           qrcode: true,
@@ -86,54 +58,34 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
       }))
 
       await invoke('save_config', { config })
-      setCurrentStep('complete')
+
+      // Move to success step
+      setCurrentStep('success')
     } catch (error) {
-      console.error('Failed to save printer assignments:', error)
-      alert(`Failed to save printer configuration: ${error}`)
+      console.error('Setup failed:', error)
+      throw error
     }
   }
 
-  const handleComplete = () => {
-    onComplete()
-  }
-
   return (
-    <div className="setup-wizard">
-      <div className="wizard-header">
-        <h1>Eatsome Printer Service Setup</h1>
-        <div className="step-indicator">
-          <div className={`step ${currentStep === 'welcome' ? 'active' : 'completed'}`}>1</div>
-          <div
-            className={`step ${currentStep === 'auth' ? 'active' : currentStep === 'discovery' || currentStep === 'assignment' || currentStep === 'complete' ? 'completed' : ''}`}
-          >
-            2
-          </div>
-          <div
-            className={`step ${currentStep === 'discovery' ? 'active' : currentStep === 'assignment' || currentStep === 'complete' ? 'completed' : ''}`}
-          >
-            3
-          </div>
-          <div
-            className={`step ${currentStep === 'assignment' ? 'active' : currentStep === 'complete' ? 'completed' : ''}`}
-          >
-            4
-          </div>
-          <div className={`step ${currentStep === 'complete' ? 'active' : ''}`}>5</div>
+    <div className="modern-wizard">
+      {/* Progress indicator */}
+      <div className="wizard-progress">
+        <div className={`progress-dot ${currentStep === 'connect' ? 'active' : 'completed'}`}>
+          {currentStep === 'success' ? <Check size={14} /> : '1'}
         </div>
+        <div className="progress-line"></div>
+        <div className={`progress-dot ${currentStep === 'success' ? 'active' : ''}`}>2</div>
       </div>
 
-      <div className="wizard-content">
-        {currentStep === 'welcome' && <WelcomeStep onNext={handleWelcomeNext} />}
-        {currentStep === 'auth' && <AuthenticationStep onComplete={handleAuthComplete} />}
-        {currentStep === 'discovery' && <DiscoveryStep onComplete={handleDiscoveryComplete} />}
-        {currentStep === 'assignment' && (
-          <AssignmentStep printers={discoveredPrinters} onComplete={handleAssignmentComplete} />
-        )}
-        {currentStep === 'complete' && (
-          <CompleteStep
+      {/* Content */}
+      <div className="wizard-container">
+        {currentStep === 'connect' && <ConnectStep onComplete={handleConnectComplete} />}
+        {currentStep === 'success' && (
+          <SuccessStep
             restaurantId={restaurantId}
-            printerCount={assignments.length}
-            onFinish={handleComplete}
+            printerCount={discoveredPrinters.length}
+            onFinish={onComplete}
           />
         )}
       </div>

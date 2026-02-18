@@ -184,6 +184,7 @@ pub struct CircuitBreakerStatus {
     pub circuit_open_count: u64,
     pub recovery_count: u64,
     #[serde(skip)]
+    #[allow(dead_code)] // Diagnostic field for admin dashboard
     pub last_failure_time: Option<Instant>,
 }
 

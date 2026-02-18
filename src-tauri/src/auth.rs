@@ -28,7 +28,7 @@ impl PrinterClaims {
     ) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
+            .unwrap_or_default()
             .as_secs();
 
         Self {
@@ -44,7 +44,7 @@ impl PrinterClaims {
     pub fn is_expired(&self) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
+            .unwrap_or_default()
             .as_secs();
 
         self.exp < now
@@ -59,7 +59,7 @@ impl PrinterClaims {
     pub fn needs_rotation(&self) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
+            .unwrap_or_default()
             .as_secs();
 
         // Rotation window: 1 hour before expiration
@@ -211,7 +211,7 @@ impl TokenRotationHandler {
                     // Check if still within grace period
                     let now = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
-                        .expect("Time went backwards")
+                        .unwrap_or_default()
                         .as_secs();
 
                     if claims.exp.saturating_sub(3600) < now {

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
@@ -90,7 +89,7 @@ impl Default for TelemetryMetrics {
             circuit_breakers_open: 0,
             last_update_ts: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
         }
     }
@@ -121,7 +120,7 @@ impl TelemetryCollector {
     pub async fn record_event(&self, event: TelemetryEvent) {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         // Update metrics based on event type
@@ -130,7 +129,6 @@ impl TelemetryCollector {
         match &event {
             TelemetryEvent::PrintJobCompleted {
                 duration_ms,
-                retry_count,
                 ..
             } => {
                 metrics.total_jobs_completed += 1;
@@ -178,8 +176,7 @@ impl TelemetryCollector {
             TelemetryEvent::QueueSnapshot {
                 pending,
                 processing,
-                completed,
-                failed,
+                ..
             } => {
                 metrics.queue_depth = *pending + *processing;
                 debug!("Queue snapshot - Depth: {}, Pending: {}, Processing: {}", metrics.queue_depth, pending, processing);
@@ -229,6 +226,7 @@ impl TelemetryCollector {
     }
 
     /// Reset all metrics (for testing)
+    #[allow(dead_code)]
     pub async fn reset(&self) {
         let mut metrics = self.metrics.write().await;
         *metrics = TelemetryMetrics::default();

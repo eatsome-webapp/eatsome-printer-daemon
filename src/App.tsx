@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import SetupWizard from './components/SetupWizard'
-import './App.css'
+import MainDashboard from './components/MainDashboard'
+import ConfirmDialog from './components/ConfirmDialog'
 
 interface AppConfig {
   version: string
@@ -10,16 +11,13 @@ interface AppConfig {
   auth_token: string | null
   supabase_url: string
   supabase_anon_key: string
-  service_role_key: string
   printers: any[]
 }
 
 function App() {
-  const [config, setConfig] = useState<AppConfig | null>(null)
   const [loading, setLoading] = useState(true)
-  const [discoveredPrinters, setDiscoveredPrinters] = useState<any[]>([])
-  const [discovering, setDiscovering] = useState(false)
   const [showWizard, setShowWizard] = useState(false)
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
 
   useEffect(() => {
     loadConfig()
@@ -28,127 +26,96 @@ function App() {
   async function loadConfig() {
     try {
       const cfg = await invoke<AppConfig>('get_config')
-      setConfig(cfg)
 
       // Show wizard if restaurant_id is not configured
       if (!cfg.restaurant_id) {
         setShowWizard(true)
+      } else {
+        // Auto-connect to Realtime on startup
+        try {
+          await invoke('start_polling', { restaurantId: cfg.restaurant_id })
+        } catch (error) {
+          console.warn('Auto-connect on startup failed:', error)
+        }
       }
     } catch (error) {
       console.error('Failed to load config:', error)
+      // Show wizard on config load error (first run)
+      setShowWizard(true)
     } finally {
       setLoading(false)
     }
   }
 
-  function handleWizardComplete() {
+  async function handleWizardComplete() {
     setShowWizard(false)
-    loadConfig() // Reload config after setup
+    // loadConfig() already calls start_polling when restaurant_id is set
+    await loadConfig()
   }
 
-  async function discoverPrinters() {
-    setDiscovering(true)
-    try {
-      const printers = await invoke<any[]>('discover_printers')
-      setDiscoveredPrinters(printers)
-    } catch (error) {
-      console.error('Failed to discover printers:', error)
-    } finally {
-      setDiscovering(false)
-    }
+  function handleReset() {
+    setShowResetConfirm(true)
   }
 
-  async function testPrint(printerId: string) {
+  async function confirmReset() {
+    setShowResetConfirm(false)
+
     try {
-      await invoke('test_print', { printerId })
-      alert('Test print sent successfully!')
+      const defaultConfig: AppConfig = {
+        version: '1.0.0',
+        restaurant_id: null,
+        location_id: null,
+        auth_token: null,
+        supabase_url: 'https://gtlpzikuozrdgomsvqmo.supabase.co',
+        supabase_anon_key:
+          'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd0bHB6aWt1b3pyZGdvbXN2cW1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxMDA1NTksImV4cCI6MjA3NzY3NjU1OX0.Yi1a1-wv-qvN9NVZhqYqQEQ_4H8FMKVANsyEipzHGfA',
+        printers: [],
+      }
+
+      await invoke('save_config', { config: defaultConfig })
+
+      // Clear all print jobs from the queue
+      try {
+        await invoke('clear_queue')
+      } catch (e) {
+        console.warn('Failed to clear queue during reset:', e)
+      }
+
+      setShowWizard(true)
     } catch (error) {
-      console.error('Failed to send test print:', error)
-      alert(`Test print failed: ${error}`)
+      console.error('Failed to reset config:', error)
     }
   }
 
   if (loading) {
     return (
-      <div className="container">
-        <h1>Loading...</h1>
+      <div className="dashboard-loading">
+        <div className="spinner spinner-lg"></div>
+        <p>Loading...</p>
       </div>
     )
   }
 
-  // Show setup wizard on first run
+  // Show setup wizard on first run or after reset
   if (showWizard) {
     return <SetupWizard onComplete={handleWizardComplete} />
   }
 
+  // Show main dashboard
   return (
-    <div className="container">
-      <header>
-        <h1>Eatsome Printer Service</h1>
-        <p className="subtitle">Thermal Printer Management</p>
-      </header>
-
-      <section className="config-section">
-        <h2>Configuration</h2>
-        {config ? (
-          <div className="config-details">
-            <p>
-              <strong>Version:</strong> {config.version}
-            </p>
-            <p>
-              <strong>Restaurant ID:</strong> {config.restaurant_id || 'Not configured'}
-            </p>
-            <p>
-              <strong>Location ID:</strong> {config.location_id || 'Not configured'}
-            </p>
-            <p>
-              <strong>Supabase URL:</strong> {config.supabase_url}
-            </p>
-            <p>
-              <strong>Printers Configured:</strong> {config.printers.length}
-            </p>
-          </div>
-        ) : (
-          <p>No configuration loaded</p>
-        )}
-      </section>
-
-      <section className="printer-section">
-        <h2>Printer Discovery</h2>
-        <button onClick={discoverPrinters} disabled={discovering}>
-          {discovering ? 'Discovering...' : 'Discover Printers'}
-        </button>
-
-        {discoveredPrinters.length > 0 && (
-          <div className="printer-list">
-            <h3>Discovered Printers ({discoveredPrinters.length})</h3>
-            {discoveredPrinters.map((printer, index) => (
-              <div key={index} className="printer-card">
-                <h4>{printer.name}</h4>
-                <p>
-                  <strong>ID:</strong> {printer.id}
-                </p>
-                <p>
-                  <strong>Type:</strong> {printer.connection_type}
-                </p>
-                <p>
-                  <strong>Address:</strong> {printer.address}
-                </p>
-                <p>
-                  <strong>Vendor:</strong> {printer.vendor}
-                </p>
-                <button onClick={() => testPrint(printer.id)}>Test Print</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <footer>
-        <p className="version">v{config?.version || '1.0.0'}</p>
-        <p className="copyright">© 2024 Eatsome B.V.</p>
-      </footer>
-    </div>
+    <>
+      <MainDashboard onReset={handleReset} />
+      {showResetConfirm && (
+        <ConfirmDialog
+          title="Reset & Reconfigure"
+          message="This will delete all configuration including printers, credentials, and restaurant settings. You'll need to set up the app again."
+          confirmLabel="Reset Everything"
+          variant="danger"
+          onConfirm={confirmReset}
+          onCancel={() => setShowResetConfirm(false)}
+        />
+      )}
+    </>
   )
 }
 

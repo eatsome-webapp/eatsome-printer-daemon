@@ -49,7 +49,6 @@ export const AppConfigSchema = z.object({
   auth_token: z.string().nullable(),
   supabase_url: z.string().url(),
   supabase_anon_key: z.string(),
-  service_role_key: z.string(),
   printers: z.array(PrinterConfigSchema),
 })
 export type AppConfig = z.infer<typeof AppConfigSchema>
@@ -85,7 +84,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   location_id: null,
   auth_token: null,
   supabase_url: 'https://gtlpzikuozrdgomsvqmo.supabase.co',
-  supabase_anon_key: '',
-  service_role_key: '',
+  supabase_anon_key:
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd0bHB6aWt1b3pyZGdvbXN2cW1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxMDA1NTksImV4cCI6MjA3NzY3NjU1OX0.Yi1a1-wv-qvN9NVZhqYqQEQ_4H8FMKVANsyEipzHGfA',
   printers: [],
 }

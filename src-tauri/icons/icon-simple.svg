@@ -1,21 +1,21 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
   <!-- Simple Thermal Printer Icon (No text, works with basic ImageMagick) -->
 
-  <!-- Background Circle -->
-  <circle cx="512" cy="512" r="480" fill="#2563eb" />
+  <!-- Background Circle - Eatsome Yellow -->
+  <circle cx="512" cy="512" r="480" fill="#fdd500" />
 
-  <!-- Printer Body -->
-  <rect x="256" y="280" width="512" height="380" rx="24" fill="#ffffff" />
-  <rect x="280" y="304" width="464" height="332" rx="12" fill="#f1f5f9" />
+  <!-- Printer Body - Black -->
+  <rect x="256" y="280" width="512" height="380" rx="24" fill="#000" />
+  <rect x="280" y="304" width="464" height="332" rx="12" fill="#1a1a1a" />
 
-  <!-- Printer Top Paper Feed -->
-  <rect x="340" y="200" width="344" height="120" rx="16" fill="#ffffff" />
-  <rect x="360" y="220" width="304" height="80" fill="#f8fafc" />
+  <!-- Printer Top Paper Feed - Black -->
+  <rect x="340" y="200" width="344" height="120" rx="16" fill="#000" />
+  <rect x="360" y="220" width="304" height="80" fill="#2a2a2a" />
 
-  <!-- Paper Lines -->
-  <line x1="380" y1="240" x2="644" y2="240" stroke="#cbd5e1" stroke-width="4" />
-  <line x1="380" y1="260" x2="580" y2="260" stroke="#cbd5e1" stroke-width="4" />
-  <line x1="380" y1="280" x2="620" y2="280" stroke="#cbd5e1" stroke-width="4" />
+  <!-- Paper Lines - Lighter for contrast -->
+  <line x1="380" y1="240" x2="644" y2="240" stroke="#4a4a4a" stroke-width="4" />
+  <line x1="380" y1="260" x2="580" y2="260" stroke="#4a4a4a" stroke-width="4" />
+  <line x1="380" y1="280" x2="620" y2="280" stroke="#4a4a4a" stroke-width="4" />
 
   <!-- Control Buttons -->
   <circle cx="320" cy="380" r="16" fill="#22c55e" />
@@ -29,11 +29,11 @@
   <rect x="492" y="370" width="60" height="20" rx="4" fill="#22c55e" />
   <rect x="564" y="370" width="40" height="20" rx="4" fill="#22c55e" />
 
-  <!-- Paper Output -->
-  <rect x="400" y="660" width="224" height="80" rx="8" fill="#ffffff" />
-  <line x1="420" y1="680" x2="604" y2="680" stroke="#e2e8f0" stroke-width="3" />
-  <line x1="420" y1="700" x2="560" y2="700" stroke="#e2e8f0" stroke-width="3" />
-  <line x1="420" y1="720" x2="604" y2="720" stroke="#e2e8f0" stroke-width="3" />
+  <!-- Paper Output - Black -->
+  <rect x="400" y="660" width="224" height="80" rx="8" fill="#000" />
+  <line x1="420" y1="680" x2="604" y2="680" stroke="#3a3a3a" stroke-width="3" />
+  <line x1="420" y1="700" x2="560" y2="700" stroke="#3a3a3a" stroke-width="3" />
+  <line x1="420" y1="720" x2="604" y2="720" stroke="#3a3a3a" stroke-width="3" />
 
   <!-- Status LED -->
   <circle cx="512" cy="600" r="12" fill="#22c55e" />

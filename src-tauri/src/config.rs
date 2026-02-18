@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     pub version: String,
     pub restaurant_id: Option<String>,
@@ -9,7 +10,6 @@ pub struct AppConfig {
     pub auth_token: Option<String>,
     pub supabase_url: String,
     pub supabase_anon_key: String,
-    pub service_role_key: String,
     pub printers: Vec<PrinterConfig>,
 }
 
@@ -69,8 +69,7 @@ impl Default for AppConfig {
             location_id: None,
             auth_token: None,
             supabase_url: "https://gtlpzikuozrdgomsvqmo.supabase.co".to_string(),
-            supabase_anon_key: String::new(),
-            service_role_key: String::new(),
+            supabase_anon_key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd0bHB6aWt1b3pyZGdvbXN2cW1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxMDA1NTksImV4cCI6MjA3NzY3NjU1OX0.Yi1a1-wv-qvN9NVZhqYqQEQ_4H8FMKVANsyEipzHGfA".to_string(),
             printers: Vec::new(),
         }
     }

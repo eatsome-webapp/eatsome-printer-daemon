@@ -1,5 +1,6 @@
 use crate::auth::{JWTManager, PrinterClaims};
 use crate::errors::{DaemonError, Result};
+use crate::status;
 use crate::queue::{PrintJob, QueueManager};
 use crate::telemetry::TelemetryCollector;
 use axum::{
@@ -13,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower::ServiceBuilder;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 /// HTTP API server state
 #[derive(Clone)]
@@ -24,14 +25,18 @@ pub struct ApiState {
     pub telemetry: Arc<TelemetryCollector>,
     pub jwt_manager: Arc<JWTManager>,
     pub restaurant_id: String,
+    /// Shared connection state: tracks Supabase Realtime connectivity
+    pub supabase_connected: Arc<std::sync::atomic::AtomicBool>,
+    /// Daemon start time for uptime calculation
+    pub start_time: std::time::Instant,
 }
 
 /// Print request payload
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct PrintRequest {
     pub restaurant_id: String,
     pub station: String,
-    pub order_id: String,
+    pub order_id: Option<String>,
     pub order_number: String,
     pub items: Vec<PrintItemRequest>,
     pub table_number: Option<String>,
@@ -40,7 +45,7 @@ pub struct PrintRequest {
     pub priority: Option<u8>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct PrintItemRequest {
     pub quantity: u32,
     pub name: String,
@@ -63,6 +68,10 @@ pub struct HealthResponse {
     pub version: String,
     pub uptime_secs: u64,
     pub restaurant_id: String,
+    /// Whether Supabase Realtime is currently connected
+    pub supabase_connected: bool,
+    /// Operational mode: "online" (Supabase connected) or "offline" (local-only)
+    pub mode: String,
 }
 
 /// Error response
@@ -77,7 +86,6 @@ impl IntoResponse for DaemonError {
         let error_string = self.to_string();
         let (status, message) = match self {
             DaemonError::PrinterNotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            DaemonError::PrinterOffline(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
             DaemonError::Queue(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             DaemonError::Config(msg) => (StatusCode::BAD_REQUEST, msg),
             _ => (
@@ -170,7 +178,7 @@ async fn handle_print(
         order_type: request.order_type,
         priority: request.priority.unwrap_or(3),
         timestamp,
-        status: "pending".to_string(),
+        status: status::PENDING.to_string(),
         retry_count: 0,
         error_message: None,
     };
@@ -192,15 +200,22 @@ async fn handle_print(
 }
 
 /// GET /api/health - Health check endpoint
+///
+/// Reports daemon health, uptime, and Supabase connectivity.
+/// POS apps use this to determine if the daemon is reachable and
+/// whether to route print jobs via Supabase Realtime or local HTTP API.
 async fn handle_health(State(state): State<ApiState>) -> Json<HealthResponse> {
-    // TODO: Track daemon start time for accurate uptime
-    let uptime_secs = 0; // Placeholder
+    let uptime_secs = state.start_time.elapsed().as_secs();
+    let supabase_connected = state.supabase_connected.load(std::sync::atomic::Ordering::Relaxed);
+    let mode = if supabase_connected { "online" } else { "offline" };
 
     Json(HealthResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         uptime_secs,
         restaurant_id: state.restaurant_id.clone(),
+        supabase_connected,
+        mode: mode.to_string(),
     })
 }
 
@@ -246,7 +261,26 @@ pub fn create_router(state: ApiState) -> Router {
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
-                .layer(CorsLayer::permissive()), // TODO: Restrict CORS in production
+                .layer(
+                    CorsLayer::new()
+                        .allow_origin(AllowOrigin::predicate(|origin, _| {
+                            let o = origin.as_bytes();
+                            // Allow localhost origins (Tauri webview + local dev)
+                            o.starts_with(b"http://localhost")
+                                || o.starts_with(b"https://localhost")
+                                || o.starts_with(b"http://127.0.0.1")
+                                || o.starts_with(b"http://tauri.localhost")
+                                || o.starts_with(b"https://tauri.localhost")
+                                // Allow production restaurant webapp
+                                || o == b"https://eatsome-restaurant.vercel.app"
+                        }))
+                        .allow_methods([
+                            axum::http::Method::GET,
+                            axum::http::Method::POST,
+                            axum::http::Method::OPTIONS,
+                        ])
+                        .allow_headers(tower_http::cors::Any),
+                ),
         )
         .with_state(state)
 }
@@ -291,6 +325,8 @@ mod tests {
             telemetry,
             jwt_manager,
             restaurant_id: "rest_123".to_string(),
+            supabase_connected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            start_time: std::time::Instant::now(),
         }
     }
 
@@ -329,7 +365,7 @@ mod tests {
         let print_request = PrintRequest {
             restaurant_id: "rest_123".to_string(),
             station: "bar".to_string(),
-            order_id: "order_1".to_string(),
+            order_id: Some("order_1".to_string()),
             order_number: "R001-0001".to_string(),
             items: vec![],
             table_number: None,
@@ -363,7 +399,7 @@ mod tests {
         let print_request = PrintRequest {
             restaurant_id: "rest_123".to_string(),
             station: "bar".to_string(),
-            order_id: "order_1".to_string(),
+            order_id: Some("order_1".to_string()),
             order_number: "R001-0001".to_string(),
             items: vec![PrintItemRequest {
                 quantity: 2,
