@@ -597,6 +597,50 @@
   width: 100%;
 }
 
+/* Settings - Update Section */
+.settings-update-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.settings-update-version {
+  font-size: 0.8125rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.settings-update-available {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 213, 0, 0.1);
+  border: 1px solid rgba(255, 213, 0, 0.3);
+  border-radius: 8px;
+}
+
+.settings-update-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #FFD500;
+}
+
+.settings-update-uptodate {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(122, 158, 126, 0.15);
+  border: 1px solid rgba(122, 158, 126, 0.3);
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  color: #7A9E7E;
+}
+
 /* Settings - Connection Status */
 .settings-connection-status {
   display: flex;

@@ -5,6 +5,7 @@ import {
   Printer,
   Settings,
   X,
+  CheckCircle,
   ClipboardList,
   CircleCheck,
   CircleX,
@@ -71,8 +72,13 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
   )
   const [removePrinterId, setRemovePrinterId] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [updateAvailable, setUpdateAvailable] = useState<{ current_version: string; latest_version: string } | null>(null)
+  const [updateAvailable, setUpdateAvailable] = useState<{
+    current_version: string
+    latest_version: string
+  } | null>(null)
   const [updateInstalling, setUpdateInstalling] = useState(false)
+  const [updateChecking, setUpdateChecking] = useState(false)
+  const [updateCheckResult, setUpdateCheckResult] = useState<'up-to-date' | 'error' | null>(null)
 
   useEffect(() => {
     loadConfig()
@@ -84,9 +90,12 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
       setQueueStats(event.payload)
     })
 
-    const unlistenUpdate = listen<{ current_version: string; latest_version: string }>('update-available', (event) => {
-      setUpdateAvailable(event.payload)
-    })
+    const unlistenUpdate = listen<{ current_version: string; latest_version: string }>(
+      'update-available',
+      (event) => {
+        setUpdateAvailable(event.payload)
+      }
+    )
 
     const unlistenInstalling = listen('update-installing', () => {
       setUpdateInstalling(true)
@@ -260,6 +269,32 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
     } catch (error) {
       setUpdateInstalling(false)
       setErrorMessage(`Update mislukt: ${error}`)
+    }
+  }
+
+  async function handleCheckForUpdates() {
+    try {
+      setUpdateChecking(true)
+      setUpdateCheckResult(null)
+      const result = await invoke<{
+        available: boolean
+        current_version: string
+        latest_version?: string
+      }>('check_for_updates')
+      if (result.available) {
+        setUpdateAvailable({
+          current_version: result.current_version,
+          latest_version: result.latest_version!,
+        })
+        setUpdateCheckResult(null)
+      } else {
+        setUpdateCheckResult('up-to-date')
+      }
+    } catch (error) {
+      setUpdateCheckResult('error')
+      setErrorMessage(`Update check mislukt: ${error}`)
+    } finally {
+      setUpdateChecking(false)
     }
   }
 
@@ -479,6 +514,58 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
                   {connectionState === 'connected'
                     ? 'Verbonden met Eatsome Cloud'
                     : 'Niet verbonden'}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Software Update</label>
+                <div className="settings-update-section">
+                  <div className="settings-update-version">Huidige versie: v{config.version}</div>
+                  {updateAvailable ? (
+                    <div className="settings-update-available">
+                      <div className="settings-update-info">
+                        <Download size={14} />
+                        <span>Versie {updateAvailable.latest_version} beschikbaar</span>
+                      </div>
+                      <button
+                        className="btn-sm btn-update"
+                        onClick={handleInstallUpdate}
+                        disabled={updateInstalling}
+                      >
+                        {updateInstalling ? (
+                          <>
+                            <Loader2 size={14} className="spin" />
+                            Installeren...
+                          </>
+                        ) : (
+                          'Nu updaten'
+                        )}
+                      </button>
+                    </div>
+                  ) : updateCheckResult === 'up-to-date' ? (
+                    <div className="settings-update-uptodate">
+                      <CheckCircle size={14} />
+                      <span>Je hebt de nieuwste versie</span>
+                    </div>
+                  ) : (
+                    <button
+                      className="btn-sm btn-secondary"
+                      onClick={handleCheckForUpdates}
+                      disabled={updateChecking}
+                    >
+                      {updateChecking ? (
+                        <>
+                          <Loader2 size={14} className="spin" />
+                          Controleren...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw size={14} />
+                          Controleer op updates
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
