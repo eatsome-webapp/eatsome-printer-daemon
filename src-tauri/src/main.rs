@@ -1326,15 +1326,13 @@ async fn main() {
             setup_system_tray(app.handle())?;
             info!("System tray initialized");
 
-            // Start auto-updater background task
+            // Start update checker (notify-only, user decides when to install)
             let handle = app.handle().clone();
-            let state = app.state::<AppState>();
-            let queue_mgr = state.queue_manager.clone();
-            let updater = Arc::new(updater::UpdateChecker::new(handle, queue_mgr));
+            let checker = Arc::new(updater::UpdateChecker::new(handle));
             tauri::async_runtime::spawn(async move {
-                updater.start().await;
+                checker.start().await;
             });
-            info!("Auto-updater initialized (6h check interval)");
+            info!("Update checker initialized (6h check interval, notify-only)");
 
             Ok(())
         })
@@ -1364,7 +1362,7 @@ async fn main() {
             get_log_tail,
             get_log_path,
             updater::check_for_updates,
-            updater::get_update_status,
+            updater::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

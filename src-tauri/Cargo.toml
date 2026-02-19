@@ -1,6 +1,6 @@
 [package]
 name = "eatsome-printer-daemon"
-version = "1.1.6"
+version = "1.2.0"
 description = "Eatsome Printer Service - Tauri Edition"
 authors = ["Eatsome B.V."]
 license = "MIT"
