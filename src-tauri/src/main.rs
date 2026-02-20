@@ -1118,7 +1118,7 @@ async fn main() {
 
     std::fs::create_dir_all(&log_dir).ok();
 
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "app.log");
+    let file_appender = tracing_appender::rolling::never(&log_dir, "app.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     // Build tracing subscriber with file logging + Sentry integration

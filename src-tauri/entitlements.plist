@@ -22,9 +22,11 @@
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
 
-    <!-- Application sandbox -->
+    <!-- Application sandbox: disabled for GitHub-distributed app.
+         Required only for Mac App Store. Disabling allows the Tauri
+         updater to replace the .app bundle in /Applications/. -->
     <key>com.apple.security.app-sandbox</key>
-    <true/>
+    <false/>
 
     <!-- Hardened runtime -->
     <key>com.apple.security.cs.allow-jit</key>
