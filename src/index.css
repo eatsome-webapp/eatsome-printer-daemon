@@ -3,7 +3,7 @@
 }
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
@@ -17,9 +17,20 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Native app feel: no text selection, no drag, no context menu artifacts */
 body {
   margin: 0;
   min-width: 320px;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  overflow: hidden;
+}
+
+/* Allow text selection only in input fields */
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 button {
@@ -39,9 +50,16 @@ button:hover {
   border-color: #646cff;
 }
 
+/* Native-style focus: subtle ring instead of browser blue */
 button:focus,
 button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+  outline: 2px solid rgba(255, 213, 0, 0.5);
+  outline-offset: 1px;
+}
+
+input:focus,
+input:focus-visible {
+  outline: none;
 }
 
 button:disabled {

@@ -574,104 +574,73 @@
 
 .modal-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 0.75rem;
-  padding: 1.25rem 1.5rem;
+  padding: 1rem 1.5rem;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* Settings - Danger Zone */
-.settings-danger-zone {
-  padding: 1.25rem 1.5rem;
-  border-top: 1px solid rgba(239, 68, 68, 0.3);
-  background: rgba(239, 68, 68, 0.05);
-  border-radius: 0 0 12px 12px;
-}
-
-.settings-danger-zone h3 {
-  margin: 0 0 0.5rem 0;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #EF4444;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.settings-danger-zone p {
-  margin: 0 0 0.75rem 0;
-  font-size: 0.8125rem;
-  color: rgba(255, 255, 255, 0.5);
-  line-height: 1.5;
-}
-
-.settings-danger-zone .btn-danger {
-  width: 100%;
-}
-
-/* Settings - Update Section */
-.settings-update-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.settings-update-version {
-  font-size: 0.8125rem;
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.settings-update-available {
+/* Settings - Compact Info Rows */
+.settings-info-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  background: rgba(255, 213, 0, 0.1);
-  border: 1px solid rgba(255, 213, 0, 0.3);
-  border-radius: 8px;
+  padding: 0.625rem 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.settings-update-info {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+.settings-info-label {
   font-size: 0.8125rem;
   font-weight: 600;
-  color: #FFD500;
+  color: rgba(255, 255, 255, 0.7);
 }
 
-.settings-update-uptodate {
+.settings-version-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  background: rgba(122, 158, 126, 0.15);
-  border: 1px solid rgba(122, 158, 126, 0.3);
-  border-radius: 8px;
-  font-size: 0.8125rem;
-  color: #7A9E7E;
 }
 
-/* Settings - Connection Status */
-.settings-connection-status {
-  display: flex;
+.settings-version-number {
+  font-size: 0.8125rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-uptodate-badge {
+  display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 8px;
-  font-size: 0.8125rem;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.settings-connection-status.connected {
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
   color: #7A9E7E;
-  border-color: rgba(122, 158, 126, 0.3);
 }
 
-.settings-connection-status.disconnected {
+/* Danger outline button (compact, for footer) */
+.btn-danger-outline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.3rem 0.625rem;
+  border-radius: 6px;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 600;
   color: #EF4444;
-  border-color: rgba(239, 68, 68, 0.3);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-danger-outline:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: #EF4444;
+}
+
+.modal-footer-right {
+  display: flex;
+  gap: 0.75rem;
 }
 
 /* Loading State */

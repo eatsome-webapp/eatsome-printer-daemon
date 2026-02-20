@@ -542,46 +542,41 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
                 <p className="form-hint">Je restaurant code uit het admin panel</p>
               </div>
 
-              <div className="form-group">
-                <label>Verbinding</label>
-                <div className={`settings-connection-status ${connectionState}`}>
-                  {connectionState === 'connected' ? <Wifi size={14} /> : <WifiOff size={14} />}
-                  {connectionState === 'connected'
-                    ? 'Verbonden met Eatsome Cloud'
-                    : 'Niet verbonden'}
+              <div className="settings-info-row">
+                <span className="settings-info-label">Verbinding</span>
+                <div className={`connection-badge ${connectionState}`}>
+                  {connectionState === 'connected' ? <Wifi size={12} /> : <WifiOff size={12} />}
+                  {connectionState === 'connected' ? 'Verbonden' : 'Niet verbonden'}
                 </div>
               </div>
 
-              <div className="form-group">
-                <label>Software Update</label>
-                <div className="settings-update-section">
-                  <div className="settings-update-version">Huidige versie: v{config.version}</div>
+              <div className="settings-info-row">
+                <span className="settings-info-label">Versie</span>
+                <div className="settings-version-row">
+                  <span className="settings-version-number">v{config.version}</span>
                   {updateAvailable ? (
-                    <div className="settings-update-available">
-                      <div className="settings-update-info">
-                        <Download size={14} />
-                        <span>Versie {updateAvailable.latest_version} beschikbaar</span>
-                      </div>
-                      <button
-                        className="btn-sm btn-update"
-                        onClick={handleInstallUpdate}
-                        disabled={updateInstalling}
-                      >
-                        {updateInstalling ? (
-                          <>
-                            <Loader2 size={14} className="spin" />
-                            Installeren...
-                          </>
-                        ) : (
-                          'Nu updaten'
-                        )}
-                      </button>
-                    </div>
+                    <button
+                      className="btn-sm btn-update"
+                      onClick={handleInstallUpdate}
+                      disabled={updateInstalling}
+                    >
+                      {updateInstalling ? (
+                        <>
+                          <Loader2 size={12} className="spin" />
+                          Installeren...
+                        </>
+                      ) : (
+                        <>
+                          <Download size={12} />
+                          Update naar {updateAvailable.latest_version}
+                        </>
+                      )}
+                    </button>
                   ) : updateCheckResult === 'up-to-date' ? (
-                    <div className="settings-update-uptodate">
-                      <CheckCircle size={14} />
-                      <span>Je hebt de nieuwste versie</span>
-                    </div>
+                    <span className="settings-uptodate-badge">
+                      <CheckCircle size={12} />
+                      Up-to-date
+                    </span>
                   ) : (
                     <button
                       className="btn-sm btn-secondary"
@@ -589,16 +584,11 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
                       disabled={updateChecking}
                     >
                       {updateChecking ? (
-                        <>
-                          <Loader2 size={14} className="spin" />
-                          Controleren...
-                        </>
+                        <Loader2 size={12} className="spin" />
                       ) : (
-                        <>
-                          <RefreshCw size={14} />
-                          Controleer op updates
-                        </>
+                        <RefreshCw size={12} />
                       )}
+                      Controleren
                     </button>
                   )}
                 </div>
@@ -606,23 +596,17 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
             </div>
 
             <div className="modal-footer">
-              <button className="btn-secondary" onClick={() => setShowSettings(false)}>
-                Annuleren
+              <button className="btn-sm btn-danger-outline" onClick={onReset}>
+                Reset App
               </button>
-              <button className="btn-primary" onClick={handleSaveSettings}>
-                Opslaan
-              </button>
-            </div>
-
-            <div className="settings-danger-zone">
-              <h3>Gevarenzone</h3>
-              <p>
-                Verwijder alle configuratie inclusief printers, credentials en
-                restaurant-instellingen. Je moet de app opnieuw instellen.
-              </p>
-              <button className="btn-danger" onClick={onReset}>
-                Reset & Opnieuw configureren
-              </button>
+              <div className="modal-footer-right">
+                <button className="btn-secondary" onClick={() => setShowSettings(false)}>
+                  Annuleren
+                </button>
+                <button className="btn-primary" onClick={handleSaveSettings}>
+                  Opslaan
+                </button>
+              </div>
             </div>
           </div>
         </div>

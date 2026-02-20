@@ -21,6 +21,13 @@ function App() {
 
   useEffect(() => {
     loadConfig()
+
+    // Disable browser context menu for native app feel
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault()
+    }
+    document.addEventListener('contextmenu', handleContextMenu)
+    return () => document.removeEventListener('contextmenu', handleContextMenu)
   }, [])
 
   async function loadConfig() {
@@ -62,7 +69,7 @@ function App() {
 
     try {
       const defaultConfig: AppConfig = {
-        version: '1.0.0',
+        version: '0.0.0', // overridden by Rust backend
         restaurant_id: null,
         location_id: null,
         auth_token: null,
