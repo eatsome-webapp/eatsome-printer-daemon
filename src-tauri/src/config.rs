@@ -64,7 +64,7 @@ impl AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            version: "1.0.0".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
             restaurant_id: None,
             location_id: None,
             auth_token: None,

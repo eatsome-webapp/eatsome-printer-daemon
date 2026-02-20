@@ -92,8 +92,10 @@ pub struct AppState {
 /// Get current configuration
 #[tauri::command]
 async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
-    let config = state.config.lock().await;
-    Ok(config.clone())
+    let mut config = state.config.lock().await.clone();
+    // Always return the compiled version, not the stored one (which may be stale after updates)
+    config.version = env!("CARGO_PKG_VERSION").to_string();
+    Ok(config)
 }
 
 /// Validate restaurant identifier (UUID or restaurant_code)
