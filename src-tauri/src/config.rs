@@ -8,8 +8,10 @@ pub struct AppConfig {
     pub restaurant_id: Option<String>,
     pub location_id: Option<String>,
     pub auth_token: Option<String>,
+    pub client_id: Option<String>,
     pub supabase_url: String,
     pub supabase_anon_key: String,
+    pub webapp_url: String,
     pub printers: Vec<PrinterConfig>,
 }
 
@@ -68,8 +70,10 @@ impl Default for AppConfig {
             restaurant_id: None,
             location_id: None,
             auth_token: None,
+            client_id: None,
             supabase_url: "https://gtlpzikuozrdgomsvqmo.supabase.co".to_string(),
             supabase_anon_key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd0bHB6aWt1b3pyZGdvbXN2cW1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxMDA1NTksImV4cCI6MjA3NzY3NjU1OX0.Yi1a1-wv-qvN9NVZhqYqQEQ_4H8FMKVANsyEipzHGfA".to_string(),
+            webapp_url: "https://eatsome-restaurant.vercel.app".to_string(),
             printers: Vec::new(),
         }
     }

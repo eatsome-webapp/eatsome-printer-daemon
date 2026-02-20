@@ -1,8 +1,18 @@
 use crate::errors::{DaemonError, Result};
 use reqwest::Client;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{debug, error, info, warn};
+
+/// Result from claiming a pairing code via the webapp API
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingResult {
+    pub token: String,
+    pub restaurant_id: String,
+    pub restaurant_code: String,
+    pub expires_in: String,
+}
 
 /// Supabase client with dual-mode authentication:
 /// - Setup mode (anon key): REST RPC for restaurant code resolution + validation
@@ -131,6 +141,69 @@ impl SupabaseClient {
         let exists = !rows.is_empty();
         debug!("Restaurant {} exists: {}", restaurant_id, exists);
         Ok(exists)
+    }
+
+    // =========================================================================
+    // Pairing mode — claim a pairing code via the webapp API
+    // =========================================================================
+
+    /// Claim a pairing code by calling the restaurant webapp API.
+    /// The webapp handles JWT generation + service role operations.
+    /// Returns the auth token, restaurant ID, and restaurant code.
+    pub async fn claim_pairing_code(
+        &self,
+        webapp_url: &str,
+        code: &str,
+        client_info: &serde_json::Value,
+    ) -> Result<PairingResult> {
+        let url = format!("{}/api/printer/pair", webapp_url.trim_end_matches('/'));
+
+        info!("Claiming pairing code via webapp API: {}...", &code[..2]);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&json!({
+                "code": code,
+                "clientInfo": client_info,
+            }))
+            .send()
+            .await
+            .map_err(|e| {
+                warn!("Pairing code claim request failed: {}", e);
+                DaemonError::Network(format!("Could not reach restaurant server: {}", e))
+            })?;
+
+        let status = response.status();
+
+        if status.as_u16() == 429 {
+            return Err(DaemonError::Network(
+                "Te veel pogingen. Wacht even en probeer opnieuw.".into(),
+            ));
+        }
+
+        if !status.is_success() {
+            let body: serde_json::Value = response
+                .json()
+                .await
+                .unwrap_or_else(|_| json!({ "error": "Unknown error" }));
+            let error_msg = body["error"].as_str().unwrap_or("Pairing failed");
+            warn!("Pairing code claim failed: {} - {}", status, error_msg);
+            return Err(DaemonError::Network(error_msg.to_string()));
+        }
+
+        let result: PairingResult = response
+            .json()
+            .await
+            .map_err(|e| DaemonError::Network(format!("Failed to parse pairing response: {}", e)))?;
+
+        info!(
+            "Pairing successful! Restaurant: {} ({})",
+            result.restaurant_code, result.restaurant_id
+        );
+
+        Ok(result)
     }
 
     // =========================================================================

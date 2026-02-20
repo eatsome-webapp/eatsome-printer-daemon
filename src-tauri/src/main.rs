@@ -237,6 +237,67 @@ async fn save_config(
     Ok(())
 }
 
+/// Claim a pairing code via the restaurant webapp API
+/// Returns the auth token, restaurant ID, and restaurant code
+#[tauri::command]
+async fn claim_pairing_code(
+    code: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    info!("Claiming pairing code: {}...", &code[..std::cmp::min(2, code.len())]);
+
+    // Validate code format (9 digits)
+    let trimmed = code.trim();
+    if trimmed.len() != 9 || !trimmed.chars().all(|c| c.is_ascii_digit()) {
+        return Err("Ongeldige code. Vul 9 cijfers in.".to_string());
+    }
+
+    let mut config = state.config.lock().await;
+    let webapp_url = config.webapp_url.clone();
+    let supabase_url = config.supabase_url.clone();
+    let anon_key = config.supabase_anon_key.clone();
+
+    // Get or create a persistent client_id (reused across pairings)
+    let client_id = config.client_id.clone().unwrap_or_else(|| {
+        let new_id = uuid::Uuid::new_v4().to_string();
+        info!("Generated new persistent client_id: {}", new_id);
+        new_id
+    });
+
+    // Persist client_id if it was just generated
+    if config.client_id.is_none() {
+        config.client_id = Some(client_id.clone());
+        let store = app.store("config.json").map_err(|e| e.to_string())?;
+        store.set("config", serde_json::to_value(&*config).map_err(|e| e.to_string())?);
+        store.save().map_err(|e| e.to_string())?;
+    }
+    drop(config);
+
+    // Build client info from system
+    let client_info = serde_json::json!({
+        "clientId": client_id,
+        "name": "Eatsome Printer Service",
+        "platform": std::env::consts::OS,
+        "version": env!("CARGO_PKG_VERSION"),
+    });
+
+    // Create a temporary SupabaseClient (no auth_token yet — we're pairing)
+    let client = SupabaseClient::new(supabase_url, anon_key, None);
+
+    let result = client
+        .claim_pairing_code(&webapp_url, trimmed, &client_info)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "token": result.token,
+        "restaurantId": result.restaurant_id,
+        "restaurantCode": result.restaurant_code,
+        "expiresIn": result.expires_in,
+    }))
+}
+
 /// Discover all printers (USB + Network + Bluetooth) with ESC/POS protocol probing
 #[tauri::command]
 async fn discover_printers(
@@ -1342,6 +1403,7 @@ async fn main() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             save_config,
+            claim_pairing_code,
             discover_printers,
             test_print,
             test_discovered_printer,

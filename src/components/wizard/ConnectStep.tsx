@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Store, QrCode, AlertTriangle, Zap, ChevronRight, ArrowLeft } from 'lucide-react'
+import { invoke } from '@tauri-apps/api/core'
+import { Store, AlertTriangle, Zap } from 'lucide-react'
 
 interface ConnectStepProps {
   onComplete: (token: string, restaurantId: string) => Promise<void>
@@ -8,24 +9,43 @@ interface ConnectStepProps {
 export default function ConnectStep({ onComplete }: ConnectStepProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [manualMode, setManualMode] = useState(false)
-  const [restaurantId, setRestaurantId] = useState('')
-  const [token, setToken] = useState('')
+  const [pairingCode, setPairingCode] = useState('')
+
+  // Format display: "XX XXXXXX X" (2-6-1 grouping)
+  const formatCode = (raw: string): string => {
+    const digits = raw.replace(/\D/g, '').slice(0, 9)
+    if (digits.length <= 2) return digits
+    if (digits.length <= 8) return `${digits.slice(0, 2)} ${digits.slice(2)}`
+    return `${digits.slice(0, 2)} ${digits.slice(2, 8)} ${digits.slice(8)}`
+  }
+
+  const handleInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value.replace(/\D/g, '').slice(0, 9)
+    setPairingCode(raw)
+    setError(null)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
 
-    if (!restaurantId.trim() || !token.trim()) {
-      setError('Vul alle velden in')
+    const code = pairingCode.trim()
+    if (code.length !== 9) {
+      setError('Vul alle 9 cijfers in')
       return
     }
 
     setLoading(true)
     try {
-      await onComplete(token.trim(), restaurantId.trim())
+      const result = await invoke<{
+        token: string
+        restaurantId: string
+        restaurantCode: string
+      }>('claim_pairing_code', { code })
+
+      await onComplete(result.token, result.restaurantId)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Verbinden mislukt')
+      setError(err instanceof Error ? err.message : String(err))
       setLoading(false)
     }
   }
@@ -39,79 +59,49 @@ export default function ConnectStep({ onComplete }: ConnectStepProps) {
 
       {/* Title */}
       <h1 className="connect-title">Verbind je Restaurant</h1>
-      <p className="connect-subtitle">Koppel de printer service aan je restaurant dashboard</p>
+      <p className="connect-subtitle">Voer de koppelingscode in van je restaurant dashboard</p>
 
-      {!manualMode ? (
-        <div className="qr-mode">
-          {/* QR Code placeholder */}
-          <div className="qr-placeholder">
-            <div className="qr-icon">
-              <QrCode size={48} />
-            </div>
-            <p className="qr-text">Scan QR code in restaurant dashboard</p>
-            <p className="qr-hint">Dashboard &rarr; Devices &rarr; QR Code</p>
-          </div>
-
-          {/* Manual mode toggle */}
-          <button type="button" className="manual-toggle" onClick={() => setManualMode(true)}>
-            Of handmatig koppelen <ChevronRight size={14} />
-          </button>
-        </div>
-      ) : (
-        <form onSubmit={handleSubmit} className="manual-form">
-          <div className="form-field">
-            <input
-              type="text"
-              placeholder="e.g. W434N"
-              value={restaurantId}
-              onChange={(e) => setRestaurantId(e.target.value)}
-              className="modern-input"
-              disabled={loading}
-            />
-          </div>
-
-          <div className="form-field">
-            <input
-              type="password"
-              placeholder="Access Token"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              className="modern-input"
-              disabled={loading}
-            />
-          </div>
-
-          {error && (
-            <div className="error-box">
-              <AlertTriangle size={16} className="error-icon" />
-              {error}
-            </div>
-          )}
-
-          <button type="submit" className="connect-button" disabled={loading}>
-            {loading ? (
-              <>
-                <div className="spinner spinner-connect"></div>
-                Verbinden...
-              </>
-            ) : (
-              <>
-                <Zap size={16} />
-                Verbind Restaurant
-              </>
-            )}
-          </button>
-
-          <button
-            type="button"
-            className="back-button"
-            onClick={() => setManualMode(false)}
+      <form onSubmit={handleSubmit} className="connect-form">
+        <div className="form-field">
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="00 000000 0"
+            value={formatCode(pairingCode)}
+            onChange={handleInput}
+            className="modern-input pairing-input"
             disabled={loading}
-          >
-            <ArrowLeft size={14} /> Terug naar QR code
-          </button>
-        </form>
-      )}
+            autoFocus
+          />
+        </div>
+
+        {error && (
+          <div className="error-box">
+            <AlertTriangle size={16} className="error-icon" />
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          className="connect-button"
+          disabled={loading || pairingCode.length !== 9}
+        >
+          {loading ? (
+            <>
+              <div className="spinner spinner-connect"></div>
+              Verbinden...
+            </>
+          ) : (
+            <>
+              <Zap size={16} />
+              Verbind Restaurant
+            </>
+          )}
+        </button>
+
+        <p className="connect-hint">Dashboard &rarr; Devices &rarr; &quot;Genereer Code&quot;</p>
+      </form>
     </div>
   )
 }
