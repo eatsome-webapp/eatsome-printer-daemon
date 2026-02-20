@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Service Identification -->
+    <key>Label</key>
+    <string>com.eatsome.printer-service</string>
+
+    <!-- Program to Run -->
+    <key>Program</key>
+    <string>/Applications/Eatsome Printer Service.app/Contents/MacOS/eatsome-printer-service</string>
+
+    <!-- Arguments (optional - run in silent mode) -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/Eatsome Printer Service.app/Contents/MacOS/eatsome-printer-service</string>
+        <string>--silent</string>
+    </array>
+
+    <!-- Start on Login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Keep Alive (restart if crashes) -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <!-- Process Type -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <!-- Standard Output/Error Logging -->
+    <key>StandardOutPath</key>
+    <string>/tmp/com.eatsome.printer-service.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/com.eatsome.printer-service.err.log</string>
+
+    <!-- Throttle Restart Interval (10 seconds) -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Exit Timeout (30 seconds for graceful shutdown) -->
+    <key>ExitTimeOut</key>
+    <integer>30</integer>
+
+    <!-- Session Type (Aqua = GUI session) -->
+    <key>LimitLoadToSessionType</key>
+    <array>
+        <string>Aqua</string>
+    </array>
+
+    <!-- Nice Level (lower priority to not interfere with POS app) -->
+    <key>Nice</key>
+    <integer>5</integer>
+
+    <!-- Working Directory -->
+    <key>WorkingDirectory</key>
+    <string>/tmp</string>
+
+    <!-- Environment Variables (optional) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>RUST_LOG</key>
+        <string>info</string>
+    </dict>
+</dict>
+</plist>

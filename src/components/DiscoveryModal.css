@@ -1,0 +1,354 @@
+/* Discovery Modal - inherits modal-overlay from MainDashboard.css */
+
+.discovery-modal {
+  background: linear-gradient(135deg, #1A1A1A 0%, #2A2A2A 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  max-width: 480px;
+  width: 100%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+/* Scanning Phase */
+.discovery-scanning {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+  gap: 0.75rem;
+}
+
+.discovery-spinner {
+  color: #FFD500;
+}
+
+.discovery-scanning-text {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #FFFFFF;
+}
+
+.discovery-scanning-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* Toolbar */
+.discovery-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.625rem 1.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.discovery-count {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 500;
+}
+
+.btn-text {
+  background: none;
+  border: none;
+  color: #FFD500;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.25rem 0;
+  transition: opacity 0.15s;
+}
+
+.btn-text:hover {
+  opacity: 0.8;
+}
+
+/* Results List */
+.discovery-list {
+  overflow-y: auto;
+  max-height: 320px;
+  padding: 0.5rem 0.75rem;
+}
+
+.discovery-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.625rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.discovery-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.discovery-row + .discovery-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.discovery-row-selected {
+  background: rgba(255, 213, 0, 0.05);
+}
+
+.discovery-row-selected:hover {
+  background: rgba(255, 213, 0, 0.08);
+}
+
+.discovery-row-disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.discovery-row-disabled:hover {
+  background: transparent;
+}
+
+/* Custom Checkbox */
+.discovery-checkbox {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s;
+  color: transparent;
+}
+
+.discovery-checkbox.checked {
+  background: #FFD500;
+  border-color: #FFD500;
+  color: #0A0A0A;
+}
+
+.discovery-checkbox.disabled {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Row content */
+.discovery-row-icon {
+  color: #FFD500;
+  flex-shrink: 0;
+}
+
+.discovery-row-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.discovery-row-name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.discovery-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-top: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.discovery-row-address {
+  font-size: 0.6875rem;
+  color: rgba(255, 255, 255, 0.4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+/* Connection type badges */
+.badge-conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.0625rem 0.375rem;
+  border-radius: 8px;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.badge-conn-usb {
+  background: rgba(255, 213, 0, 0.15);
+  color: #FFD500;
+  border: 1px solid rgba(255, 213, 0, 0.3);
+}
+
+.badge-conn-network {
+  background: rgba(96, 165, 250, 0.15);
+  color: #60A5FA;
+  border: 1px solid rgba(96, 165, 250, 0.3);
+}
+
+.badge-conn-ble {
+  background: rgba(167, 139, 250, 0.15);
+  color: #A78BFA;
+  border: 1px solid rgba(167, 139, 250, 0.3);
+}
+
+/* Protocol badges */
+.badge-protocol {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.0625rem 0.375rem;
+  border-radius: 8px;
+  font-size: 0.5625rem;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.badge-protocol-escpos {
+  background: rgba(122, 158, 126, 0.15);
+  color: #7A9E7E;
+  border: 1px solid rgba(122, 158, 126, 0.3);
+}
+
+.badge-protocol-unknown {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.badge-protocol-unsupported {
+  background: rgba(239, 68, 68, 0.15);
+  color: #EF4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+/* Already added badge */
+.badge-already-added {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.4);
+  padding: 0.0625rem 0.375rem;
+  border-radius: 8px;
+  font-size: 0.5625rem;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Empty Phase */
+.discovery-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem 1.5rem;
+  gap: 0.75rem;
+}
+
+.discovery-empty-icon {
+  color: rgba(255, 255, 255, 0.2);
+  margin-bottom: 0.25rem;
+}
+
+.discovery-empty-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.discovery-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  color: #FCA5A5;
+  font-size: 0.8125rem;
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+.discovery-error svg {
+  flex-shrink: 0;
+  margin-top: 0.125rem;
+}
+
+/* Troubleshooting tips */
+.discovery-tips {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+}
+
+.discovery-tips-heading {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.discovery-tips ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.discovery-tips li {
+  font-size: 0.8125rem;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 0.25rem 0;
+  padding-left: 1rem;
+  position: relative;
+}
+
+.discovery-tips li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.625rem;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #FFD500;
+}
+
+/* Footer in results phase */
+.discovery-modal .modal-footer {
+  justify-content: space-between;
+}
+
+.discovery-modal .modal-footer .btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Responsive */
+@media (max-width: 440px) {
+  .discovery-modal {
+    max-width: 95vw;
+  }
+
+  .discovery-list {
+    max-height: 250px;
+  }
+
+  .discovery-row-address {
+    max-width: 100px;
+  }
+}

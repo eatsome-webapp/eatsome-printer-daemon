@@ -21,6 +21,8 @@ import {
   Loader2,
 } from 'lucide-react'
 import ConfirmDialog from './ConfirmDialog'
+import DiscoveryModal from './DiscoveryModal'
+import type { DiscoveredPrinter } from './DiscoveryModal'
 import './MainDashboard.css'
 
 interface AppConfig {
@@ -79,6 +81,10 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
   const [updateInstalling, setUpdateInstalling] = useState(false)
   const [updateChecking, setUpdateChecking] = useState(false)
   const [updateCheckResult, setUpdateCheckResult] = useState<'up-to-date' | 'error' | null>(null)
+  const [showDiscovery, setShowDiscovery] = useState(false)
+  const [testPrintStates, setTestPrintStates] = useState<
+    Map<string, 'idle' | 'printing' | 'success' | 'error'>
+  >(new Map())
 
   useEffect(() => {
     loadConfig()
@@ -195,11 +201,28 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
   }
 
   async function handleTestPrint(printerId: string) {
+    setTestPrintStates((prev) => new Map(prev).set(printerId, 'printing'))
     try {
       await invoke('test_print', { printerId })
+      setTestPrintStates((prev) => new Map(prev).set(printerId, 'success'))
+      setTimeout(() => {
+        setTestPrintStates((prev) => {
+          const next = new Map(prev)
+          next.delete(printerId)
+          return next
+        })
+      }, 2000)
     } catch (error) {
       console.error('Test print failed:', error)
       setErrorMessage(`Test print failed: ${error}`)
+      setTestPrintStates((prev) => new Map(prev).set(printerId, 'error'))
+      setTimeout(() => {
+        setTestPrintStates((prev) => {
+          const next = new Map(prev)
+          next.delete(printerId)
+          return next
+        })
+      }, 3000)
     }
   }
 
@@ -220,45 +243,45 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
     }
   }
 
-  async function handleAddPrinters() {
+  function handleAddPrinters() {
+    setShowDiscovery(true)
+  }
+
+  async function handleAddSelectedPrinters(printers: DiscoveredPrinter[]) {
+    if (!config || printers.length === 0) return
+
     try {
-      const printers = await invoke<any[]>('discover_printers')
-      if (printers.length === 0) {
-        setErrorMessage('No printers found. Make sure your printer is connected and turned on.')
-        return
+      const newPrinters: PrinterConfig[] = printers.map((p) => ({
+        id: p.id,
+        name: p.name,
+        connection_type: p.connection_type.toLowerCase(),
+        address: p.address,
+        protocol: p.protocol === 'escpos' ? 'escpos' : 'escpos',
+        station: null,
+        is_primary: false,
+        capabilities: p.capabilities
+          ? {
+              cutter: (p.capabilities as Record<string, unknown>).cutter === true,
+              drawer: (p.capabilities as Record<string, unknown>).drawer === true,
+              qrcode: (p.capabilities as Record<string, unknown>).qrcode === true,
+              max_width:
+                typeof (p.capabilities as Record<string, unknown>).maxWidth === 'number'
+                  ? ((p.capabilities as Record<string, unknown>).maxWidth as number)
+                  : 48,
+            }
+          : { cutter: true, drawer: false, qrcode: true, max_width: 48 },
+      }))
+
+      const updatedConfig = {
+        ...config,
+        printers: [...config.printers, ...newPrinters],
       }
 
-      const cfg = await invoke<AppConfig>('get_config')
-      const existingIds = new Set(cfg.printers.map((p) => p.id))
-      const newPrinters = printers
-        .filter((p) => !existingIds.has(p.id))
-        .map((p) => ({
-          id: p.id,
-          name: p.name,
-          connection_type: p.connection_type.toLowerCase(),
-          address: p.address,
-          protocol: 'escpos',
-          station: null,
-          is_primary: false,
-          capabilities: {
-            cutter: true,
-            drawer: false,
-            qrcode: true,
-            max_width: 48,
-          },
-        }))
-
-      if (newPrinters.length === 0) {
-        setErrorMessage('All discovered printers are already configured.')
-        return
-      }
-
-      cfg.printers = [...cfg.printers, ...newPrinters]
-      await invoke('save_config', { config: cfg })
+      await invoke('save_config', { config: updatedConfig })
       await loadConfig()
     } catch (error) {
-      console.error('Failed to discover printers:', error)
-      setErrorMessage(`Failed to discover printers: ${error}`)
+      console.error('Failed to add printers:', error)
+      setErrorMessage(`Failed to add printers: ${error}`)
     }
   }
 
@@ -461,13 +484,25 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
                   </div>
                 </div>
                 <div className="printer-row-actions">
-                  <button
-                    className="btn-icon-sm"
-                    onClick={() => handleTestPrint(printer.id)}
-                    title="Test Print"
-                  >
-                    <TestTube size={14} />
-                  </button>
+                  {(() => {
+                    const testState = testPrintStates.get(printer.id) || 'idle'
+                    return (
+                      <button
+                        className={`btn-icon-sm ${testState === 'success' ? 'btn-icon-success' : testState === 'error' ? 'btn-icon-danger' : ''}`}
+                        onClick={() => handleTestPrint(printer.id)}
+                        title="Test Print"
+                        disabled={testState === 'printing'}
+                      >
+                        {testState === 'printing' ? (
+                          <Loader2 size={14} className="spin" />
+                        ) : testState === 'success' ? (
+                          <CheckCircle size={14} />
+                        ) : (
+                          <TestTube size={14} />
+                        )}
+                      </button>
+                    )
+                  })()}
                   <button
                     className="btn-icon-sm btn-icon-danger"
                     onClick={() => handleRemovePrinter(printer.id)}
@@ -601,6 +636,14 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
           variant="danger"
           onConfirm={confirmRemovePrinter}
           onCancel={() => setRemovePrinterId(null)}
+        />
+      )}
+
+      {showDiscovery && (
+        <DiscoveryModal
+          existingPrinterIds={new Set(config.printers.map((p) => p.id))}
+          onClose={() => setShowDiscovery(false)}
+          onAdd={handleAddSelectedPrinters}
         />
       )}
     </div>

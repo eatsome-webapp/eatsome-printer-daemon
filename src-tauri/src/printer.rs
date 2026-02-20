@@ -51,9 +51,9 @@ impl PrinterManager {
     /// This prevents redundant full-network scans during the setup wizard flow
     /// where discovery may be triggered multiple times.
     #[tracing::instrument(skip(self))]
-    pub async fn discover_all(&self) -> Result<Vec<serde_json::Value>> {
-        // Check cache first
-        {
+    pub async fn discover_all(&self, force: bool) -> Result<Vec<serde_json::Value>> {
+        // Check cache first (skip if force=true)
+        if !force {
             let cache = self.discovery_cache.lock().await;
             if let Some(last_scan) = cache.1 {
                 if last_scan.elapsed() < Duration::from_secs(DISCOVERY_CACHE_TTL_SECS) {
@@ -559,7 +559,7 @@ impl PrinterManager {
 
         // Cache miss or expired, perform discovery
         debug!("Checking online status for printer: {}", printer_id);
-        let is_online = if let Ok(discovered) = self.discover_all().await {
+        let is_online = if let Ok(discovered) = self.discover_all(false).await {
             discovered.iter().any(|p| {
                 p.get("id")
                     .and_then(|id| id.as_str())

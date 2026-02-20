@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Date>2026-01-28T00:00:00</Date>
+    <Author>Eatsome B.V.</Author>
+    <Description>Eatsome Printer Service - Background daemon for thermal printer management</Description>
+    <URI>\Eatsome\Printer Service</URI>
+  </RegistrationInfo>
+
+  <Triggers>
+    <!-- Start on user login -->
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <Delay>PT10S</Delay>
+      <!-- Delay 10 seconds after login -->
+    </LogonTrigger>
+
+    <!-- Also start on system startup (in case service needed before login) -->
+    <BootTrigger>
+      <Enabled>false</Enabled>
+      <!-- Disabled by default - enable if needed -->
+    </BootTrigger>
+  </Triggers>
+
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+      <!-- Runs with user privileges, not admin -->
+    </Principal>
+  </Principals>
+
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <!-- Don't start multiple instances -->
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>false</AllowHardTerminate>
+    <!-- Allow graceful shutdown -->
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <!-- Start if missed schedule -->
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <!-- Can run offline -->
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <DisallowStartOnRemoteAppSession>false</DisallowStartOnRemoteAppSession>
+    <UseUnifiedSchedulingEngine>true</UseUnifiedSchedulingEngine>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <!-- No time limit -->
+    <Priority>6</Priority>
+    <!-- Below normal priority (7 = normal) -->
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <!-- Restart after 1 minute if crashes -->
+      <Count>3</Count>
+      <!-- Max 3 restart attempts -->
+    </RestartOnFailure>
+  </Settings>
+
+  <Actions Context="Author">
+    <Exec>
+      <Command>"C:\Program Files\Eatsome Printer Service\eatsome-printer-service.exe"</Command>
+      <Arguments>--silent</Arguments>
+      <WorkingDirectory>C:\Program Files\Eatsome Printer Service</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

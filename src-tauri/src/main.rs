@@ -238,11 +238,12 @@ async fn save_config(
 /// Discover all printers (USB + Network + Bluetooth) with ESC/POS protocol probing
 #[tauri::command]
 async fn discover_printers(
+    force: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    info!("Printer discovery requested");
+    info!("Printer discovery requested (force: {:?})", force);
     let manager = state.printer_manager.lock().await;
-    let results = manager.discover_all()
+    let results = manager.discover_all(force.unwrap_or(false))
         .await
         .map_err(|e| e.to_string())?;
 

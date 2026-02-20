@@ -1,0 +1,50 @@
+[Unit]
+Description=Eatsome Printer Service
+Documentation=https://github.com/eatsome/eatsome
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+Group=lp
+
+# Executable and working directory
+ExecStart=/opt/eatsome-printer-service/eatsome-printer-service --silent
+WorkingDirectory=/opt/eatsome-printer-service
+
+# Restart policy
+Restart=always
+RestartSec=10s
+
+# Graceful shutdown
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Resource limits
+MemoryMax=200M
+CPUQuota=50%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=eatsome-printer
+
+# Security hardening
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/eatsome-printer-service
+ReadWritePaths=/tmp
+
+# USB device access (requires lp group membership)
+SupplementaryGroups=lp dialout
+
+# Environment
+Environment="RUST_LOG=info"
+Environment="RUST_BACKTRACE=1"
+
+[Install]
+WantedBy=default.target

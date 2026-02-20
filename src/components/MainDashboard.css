@@ -376,6 +376,17 @@
   color: #EF4444;
 }
 
+.btn-icon-success {
+  background: rgba(122, 158, 126, 0.2);
+  border-color: #7A9E7E;
+  color: #7A9E7E;
+}
+
+.btn-icon-sm:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 /* Buttons (full-size) */
 .btn-primary,
 .btn-secondary,
