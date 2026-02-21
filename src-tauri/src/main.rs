@@ -1351,6 +1351,10 @@ async fn main() {
         }))
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
         .manage(state)
         .setup(|app| {
             // Load config from store and apply to managed state

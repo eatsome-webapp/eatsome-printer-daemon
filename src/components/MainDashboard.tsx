@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import {
+  enable as enableAutostart,
+  disable as disableAutostart,
+  isEnabled as isAutostartEnabled,
+} from '@tauri-apps/plugin-autostart'
+import {
   Printer,
   Settings,
   X,
@@ -90,6 +95,7 @@ export default function MainDashboard({
   const [updateChecking, setUpdateChecking] = useState(false)
   const [updateCheckResult, setUpdateCheckResult] = useState<'up-to-date' | 'error' | null>(null)
   const [showDiscovery, setShowDiscovery] = useState(false)
+  const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null)
   const [testPrintStates, setTestPrintStates] = useState<
     Map<string, 'idle' | 'printing' | 'success' | 'error'>
   >(new Map())
@@ -99,6 +105,7 @@ export default function MainDashboard({
     loadQueueStats()
     loadUptime()
     checkConnection()
+    loadAutostartState()
 
     const unlistenStats = listen<QueueStats>('queue-stats-updated', (event) => {
       setQueueStats(event.payload)
@@ -130,6 +137,29 @@ export default function MainDashboard({
       setEditRestaurantId(cfg.restaurant_id || '')
     } catch (error) {
       console.error('Failed to load config:', error)
+    }
+  }
+
+  async function loadAutostartState() {
+    try {
+      const enabled = await isAutostartEnabled()
+      setAutostartEnabled(enabled)
+    } catch (error) {
+      console.error('Failed to check autostart state:', error)
+    }
+  }
+
+  async function handleAutostartToggle(enabled: boolean) {
+    try {
+      if (enabled) {
+        await enableAutostart()
+      } else {
+        await disableAutostart()
+      }
+      setAutostartEnabled(enabled)
+    } catch (error) {
+      console.error('Failed to toggle autostart:', error)
+      setErrorMessage(`Automatisch starten instellen mislukt: ${error}`)
     }
   }
 
@@ -543,6 +573,19 @@ export default function MainDashboard({
                     </button>
                   )}
                 </div>
+              </div>
+
+              <div className="settings-info-row">
+                <span className="settings-info-label">Automatisch starten</span>
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={autostartEnabled ?? false}
+                    disabled={autostartEnabled === null}
+                    onChange={(e) => handleAutostartToggle(e.target.checked)}
+                  />
+                  <span className="toggle-slider"></span>
+                </label>
               </div>
             </div>
 

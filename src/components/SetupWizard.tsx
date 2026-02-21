@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { enable as enableAutostart } from '@tauri-apps/plugin-autostart'
 import { Check } from 'lucide-react'
 import ConnectStep from './wizard/ConnectStep'
 import SuccessStep from './wizard/SuccessStep'
@@ -58,6 +59,13 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
       }))
 
       await invoke('save_config', { config })
+
+      // Auto-enable autostart on first setup so the daemon survives reboots
+      try {
+        await enableAutostart()
+      } catch (e) {
+        console.warn('Failed to enable autostart:', e)
+      }
 
       // Move to success step
       setCurrentStep('success')
