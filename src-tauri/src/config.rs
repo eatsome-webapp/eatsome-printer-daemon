@@ -63,6 +63,36 @@ impl AppConfig {
     }
 }
 
+const KEYRING_SERVICE: &str = "eatsome-printer-daemon";
+const KEYRING_USER: &str = "auth-token";
+
+/// Store auth token in OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service)
+pub fn store_auth_token(token: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        .map_err(|e| format!("Keyring init failed: {}", e))?;
+    entry
+        .set_password(token)
+        .map_err(|e| format!("Keyring store failed: {}", e))
+}
+
+/// Load auth token from OS keychain
+pub fn load_auth_token() -> Option<String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).ok()?;
+    entry.get_password().ok()
+}
+
+/// Delete auth token from OS keychain (used during unpair/factory reset)
+#[allow(dead_code)] // Will be used when unpair/factory-reset command is added
+pub fn delete_auth_token() -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        .map_err(|e| format!("Keyring init failed: {}", e))?;
+    match entry.delete_credential() {
+        Ok(_) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()), // Already deleted
+        Err(e) => Err(format!("Keyring delete failed: {}", e)),
+    }
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {

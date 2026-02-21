@@ -342,6 +342,19 @@ impl SupabaseClient {
         Ok(())
     }
 
+    /// Update a single printer's status via Edge Function (circuit breaker → POS)
+    pub async fn update_printer_status(&self, printer_id: &str, status: &str) -> Result<()> {
+        debug!("Updating printer {} status to '{}'", printer_id, status);
+
+        self.edge_call("update-printer-status", json!({
+            "printer_id": printer_id,
+            "status": status,
+        })).await?;
+
+        info!("Printer {} status updated to '{}'", printer_id, status);
+        Ok(())
+    }
+
     /// Poll for pending print jobs via Edge Function.
     /// If `printer_ids` is non-empty, piggybacks a heartbeat update
     /// (last_seen + status='online') on the same call.

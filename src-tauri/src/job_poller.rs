@@ -124,6 +124,7 @@ impl JobPoller {
             order_id,
             order_number,
             station,
+            station_id: record.get("station_id").and_then(|v| v.as_str()).map(String::from),
             printer_id: record.get("printer_id").and_then(|v| v.as_str()).map(String::from),
             items,
             table_number: record.get("table_number").and_then(|v| v.as_str()).map(String::from),

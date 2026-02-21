@@ -37,6 +37,7 @@ pub struct PrintJob {
     pub order_id: Option<String>,
     pub order_number: String,
     pub station: String,
+    pub station_id: Option<String>,
     pub printer_id: Option<String>,
     pub items: Vec<PrintItem>,
     pub table_number: Option<String>,
@@ -481,6 +482,7 @@ impl QueueManager {
                         order_id: row.get(2)?,
                         order_number: row.get(3)?,
                         station: row.get(4)?,
+                        station_id: None, // Local queue doesn't store station_id
                         printer_id: row.get(5)?,
                         items,
                         table_number: row.get(7)?,

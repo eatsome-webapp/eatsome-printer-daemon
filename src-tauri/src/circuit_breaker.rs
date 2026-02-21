@@ -38,6 +38,8 @@ pub struct CircuitBreaker {
     printer_id: String,
     config: CircuitBreakerConfig,
     state: Arc<Mutex<CircuitBreakerState>>,
+    /// Optional channel to emit printer status changes (printer_id, status)
+    status_tx: Option<tokio::sync::watch::Sender<(String, String)>>,
 }
 
 #[derive(Debug)]
@@ -63,6 +65,35 @@ impl CircuitBreaker {
                 circuit_open_count: 0,
                 recovery_count: 0,
             })),
+            status_tx: None,
+        }
+    }
+
+    /// Create a circuit breaker with a status change channel
+    pub fn new_with_status_tx(
+        printer_id: String,
+        config: CircuitBreakerConfig,
+        status_tx: tokio::sync::watch::Sender<(String, String)>,
+    ) -> Self {
+        Self {
+            printer_id,
+            config,
+            state: Arc::new(Mutex::new(CircuitBreakerState {
+                current_state: CircuitState::Closed,
+                failure_timestamps: Vec::new(),
+                last_failure_time: None,
+                total_failures: 0,
+                circuit_open_count: 0,
+                recovery_count: 0,
+            })),
+            status_tx: Some(status_tx),
+        }
+    }
+
+    /// Emit a printer status change via the watch channel
+    fn emit_status(&self, status: &str) {
+        if let Some(ref tx) = self.status_tx {
+            let _ = tx.send((self.printer_id.clone(), status.to_string()));
         }
     }
 
@@ -109,6 +140,7 @@ impl CircuitBreaker {
                     state.current_state = CircuitState::Closed;
                     state.failure_timestamps.clear();
                     state.recovery_count += 1;
+                    self.emit_status("online");
                 }
                 Ok(())
             }
@@ -140,8 +172,7 @@ impl CircuitBreaker {
                         );
                         state.current_state = CircuitState::Open;
                         state.circuit_open_count += 1;
-
-                        // TODO: Alert POS app about circuit breaker opened
+                        self.emit_status("error");
                     }
                 }
 

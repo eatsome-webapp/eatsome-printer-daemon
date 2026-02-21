@@ -498,22 +498,47 @@ impl PrinterManager {
             write_char.uuid, write_char.service_uuid, write_type
         );
 
-        // 6. Write data in 20-byte chunks (safe BLE MTU minimum)
-        const BLE_CHUNK_SIZE: usize = 20;
-        for chunk in data.chunks(BLE_CHUNK_SIZE) {
-            tokio::time::timeout(
+        // 6. Write data in chunks with adaptive sizing
+        // Start with 100-byte chunks (5x throughput vs 20B), fallback to 20B on error
+        let mut chunk_size: usize = 100;
+        let mut offset = 0;
+
+        while offset < data.len() {
+            let end = std::cmp::min(offset + chunk_size, data.len());
+            let chunk = &data[offset..end];
+
+            let write_result = tokio::time::timeout(
                 Duration::from_secs(5),
                 peripheral.write(&write_char, chunk, write_type),
             )
-            .await
-            .map_err(|_| DaemonError::Bluetooth("Write chunk timed out".to_string()))?
-            .map_err(|e| DaemonError::Bluetooth(format!("Write failed: {}", e)))?;
+            .await;
+
+            match write_result {
+                Ok(Ok(_)) => {
+                    offset = end;
+                }
+                Ok(Err(e)) if chunk_size > 20 => {
+                    // Adaptive fallback: retry this chunk with smaller size
+                    warn!("BLE write failed with {}B chunks, falling back to 20B: {}", chunk_size, e);
+                    chunk_size = 20;
+                    continue; // Retry same offset with smaller chunk
+                }
+                Ok(Err(e)) => {
+                    let _ = peripheral.disconnect().await;
+                    return Err(DaemonError::Bluetooth(format!("Write failed: {}", e)));
+                }
+                Err(_) => {
+                    let _ = peripheral.disconnect().await;
+                    return Err(DaemonError::Bluetooth("Write chunk timed out".to_string()));
+                }
+            }
 
             // Small inter-chunk delay to avoid overwhelming the BLE stack
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
 
-        info!("BLE print complete: {} bytes sent in {} chunks", data.len(), (data.len() + BLE_CHUNK_SIZE - 1) / BLE_CHUNK_SIZE);
+        let chunks_sent = (data.len() + chunk_size - 1) / chunk_size;
+        info!("BLE print complete: {} bytes sent in ~{} chunks ({}B each)", data.len(), chunks_sent, chunk_size);
 
         // 7. Disconnect (best-effort)
         if let Err(e) = peripheral.disconnect().await {

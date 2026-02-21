@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 use tower::ServiceBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// HTTP API server state
 #[derive(Clone)]
@@ -171,6 +171,7 @@ async fn handle_print(
         order_id: request.order_id,
         order_number: request.order_number.clone(),
         station: request.station,
+        station_id: None, // HTTP API jobs don't carry station_id (resolved by poller)
         printer_id: None,
         items,
         table_number: request.table_number,
@@ -250,6 +251,25 @@ async fn handle_metrics_json(
     Ok(Json(metrics))
 }
 
+/// DNS rebinding defense: reject requests with unexpected Host headers
+async fn validate_host(
+    headers: HeaderMap,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> std::result::Result<Response, StatusCode> {
+    if let Some(host) = headers.get(axum::http::header::HOST).and_then(|h| h.to_str().ok()) {
+        let valid = host == "localhost:8043"
+            || host == "127.0.0.1:8043"
+            || host == "localhost"
+            || host == "127.0.0.1";
+        if !valid {
+            warn!("DNS rebinding attempt blocked: Host={}", host);
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
+    Ok(next.run(request).await)
+}
+
 /// Create HTTP API router
 pub fn create_router(state: ApiState) -> Router {
     Router::new()
@@ -258,6 +278,7 @@ pub fn create_router(state: ApiState) -> Router {
         .route("/api/queue/stats", get(handle_queue_stats))
         .route("/api/metrics", get(handle_metrics))
         .route("/api/metrics/json", get(handle_metrics_json))
+        .layer(axum::middleware::from_fn(validate_host))
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
@@ -265,12 +286,9 @@ pub fn create_router(state: ApiState) -> Router {
                     CorsLayer::new()
                         .allow_origin(AllowOrigin::predicate(|origin, _| {
                             let o = origin.as_bytes();
-                            // Allow localhost origins (Tauri webview + local dev)
-                            o.starts_with(b"http://localhost")
-                                || o.starts_with(b"https://localhost")
-                                || o.starts_with(b"http://127.0.0.1")
-                                || o.starts_with(b"http://tauri.localhost")
-                                || o.starts_with(b"https://tauri.localhost")
+                            // Allow Tauri webview origins only
+                            o == b"tauri://localhost"
+                                || o == b"https://tauri.localhost"
                                 // Allow production restaurant webapp
                                 || o == b"https://eatsome-restaurant.vercel.app"
                         }))
@@ -279,7 +297,11 @@ pub fn create_router(state: ApiState) -> Router {
                             axum::http::Method::POST,
                             axum::http::Method::OPTIONS,
                         ])
-                        .allow_headers(tower_http::cors::Any),
+                        .allow_headers([
+                            axum::http::header::CONTENT_TYPE,
+                            axum::http::header::AUTHORIZATION,
+                            axum::http::HeaderName::from_static("x-printer-token"),
+                        ]),
                 ),
         )
         .with_state(state)

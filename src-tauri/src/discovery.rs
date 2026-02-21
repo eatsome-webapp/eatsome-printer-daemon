@@ -419,29 +419,90 @@ pub async fn discover_bluetooth_printers_with_timeout(timeout_secs: u64) -> Resu
 
         let mut discovered = Vec::new();
 
+        // Known BLE printer service UUID prefixes
+        let printer_service_prefixes: Vec<&str> = vec![
+            "0000ae30", // Generic thermal printer service
+            "0000ff00", // Alternative thermal printer service
+            "49535343", // Star Micronics
+        ];
+
+        // Known manufacturer IDs for printer vendors
+        let printer_manufacturer_ids: Vec<u16> = vec![
+            0x0519, // Star Micronics
+            0x04b8, // Epson
+        ];
+
         for peripheral in peripherals {
             if let Ok(properties) = peripheral.properties().await {
                 if let Some(props) = properties {
-                    if let Some(local_name) = props.local_name {
-                        // Check if device name indicates a printer
-                        if is_bluetooth_printer(&local_name) {
-                            let address = props.address.to_string();
-                            let id = format!("ble_{}", address.replace(':', "_"));
-                            let vendor = detect_vendor(&local_name, &local_name);
+                    let address = props.address.to_string();
 
-                            let printer = DiscoveredPrinter {
-                                id: id.clone(),
+                    // Strategy 1: Name-based detection (most common)
+                    if let Some(ref local_name) = props.local_name {
+                        if is_bluetooth_printer(local_name) {
+                            let id = format!("ble_{}", address.replace(':', "_"));
+                            let vendor = detect_vendor(local_name, local_name);
+
+                            discovered.push(DiscoveredPrinter {
+                                id,
                                 name: local_name.clone(),
                                 connection_type: "bluetooth".to_string(),
-                                address,
+                                address: address.clone(),
                                 vendor,
                                 capabilities: None,
-                                protocol: "escpos".to_string(), // BLE POS printers are ESC/POS
-                            };
-
-                            discovered.push(printer);
-                            info!("Discovered Bluetooth printer: {} ({})", local_name, props.address);
+                                protocol: "escpos".to_string(),
+                            });
+                            info!("Discovered BLE printer (name): {} ({})", local_name, props.address);
+                            continue;
                         }
+                    }
+
+                    // Strategy 2: Service UUID-based detection (finds nameless printers)
+                    let has_printer_service = props.services.iter().any(|svc| {
+                        let svc_hex = format!("{:08x}", svc.as_u128() >> 96);
+                        printer_service_prefixes.iter().any(|prefix| svc_hex.starts_with(prefix))
+                    });
+
+                    if has_printer_service {
+                        let id = format!("ble_{}", address.replace(':', "_"));
+                        let short_addr = &address[..std::cmp::min(8, address.len())];
+                        let name = props.local_name.clone()
+                            .unwrap_or_else(|| format!("BLE Printer ({})", short_addr));
+
+                        discovered.push(DiscoveredPrinter {
+                            id,
+                            name: name.clone(),
+                            connection_type: "bluetooth".to_string(),
+                            address: address.clone(),
+                            vendor: "Unknown".to_string(),
+                            capabilities: None,
+                            protocol: "escpos".to_string(),
+                        });
+                        info!("Discovered BLE printer (service UUID): {} ({})", name, props.address);
+                        continue;
+                    }
+
+                    // Strategy 3: Manufacturer data heuristic (last resort)
+                    let has_printer_manufacturer = props.manufacturer_data.keys().any(|mfr_id| {
+                        printer_manufacturer_ids.contains(mfr_id)
+                    });
+
+                    if has_printer_manufacturer {
+                        let id = format!("ble_{}", address.replace(':', "_"));
+                        let short_addr = &address[..std::cmp::min(8, address.len())];
+                        let name = props.local_name.clone()
+                            .unwrap_or_else(|| format!("BLE Printer ({})", short_addr));
+
+                        discovered.push(DiscoveredPrinter {
+                            id,
+                            name: name.clone(),
+                            connection_type: "bluetooth".to_string(),
+                            address: address.clone(),
+                            vendor: "Unknown".to_string(),
+                            capabilities: None,
+                            protocol: "escpos".to_string(),
+                        });
+                        info!("Discovered BLE printer (manufacturer): {} ({})", name, props.address);
                     }
                 }
             }

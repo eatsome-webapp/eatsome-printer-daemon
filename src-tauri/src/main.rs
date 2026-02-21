@@ -45,14 +45,19 @@ use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 pub struct CircuitBreakerRegistry {
     breakers: Mutex<std::collections::HashMap<String, Arc<CircuitBreaker>>>,
     config: CircuitBreakerConfig,
+    /// Watch channel for status propagation (printer_id, status)
+    status_tx: tokio::sync::watch::Sender<(String, String)>,
 }
 
 impl CircuitBreakerRegistry {
-    fn new() -> Self {
-        Self {
+    fn new() -> (Self, tokio::sync::watch::Receiver<(String, String)>) {
+        let (tx, rx) = tokio::sync::watch::channel(("".to_string(), "online".to_string()));
+        let registry = Self {
             breakers: Mutex::new(std::collections::HashMap::new()),
             config: CircuitBreakerConfig::default(),
-        }
+            status_tx: tx,
+        };
+        (registry, rx)
     }
 
     /// Get or create a circuit breaker for a printer
@@ -61,9 +66,10 @@ impl CircuitBreakerRegistry {
         breakers
             .entry(printer_id.to_string())
             .or_insert_with(|| {
-                Arc::new(CircuitBreaker::new(
+                Arc::new(CircuitBreaker::new_with_status_tx(
                     printer_id.to_string(),
                     self.config.clone(),
+                    self.status_tx.clone(),
                 ))
             })
             .clone()
@@ -95,6 +101,10 @@ async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
     let mut config = state.config.lock().await.clone();
     // Always return the compiled version, not the stored one (which may be stale after updates)
     config.version = env!("CARGO_PKG_VERSION").to_string();
+    // Load auth_token from keyring if not already in memory
+    if config.auth_token.is_none() {
+        config.auth_token = config::load_auth_token();
+    }
     Ok(config)
 }
 
@@ -173,15 +183,23 @@ async fn save_config(
         }
     }
 
+    // Store auth_token in OS keychain (not in config.json)
+    if let Some(ref token) = config.auth_token {
+        config::store_auth_token(token).map_err(|e| format!("Failed to store auth token: {}", e))?;
+        info!("Auth token stored in OS keychain");
+    }
+
     let mut app_config = state.config.lock().await;
     *app_config = config.clone();
 
-    // Save to Tauri store
+    // Save to Tauri store (without auth_token — it's in keychain)
+    let mut config_for_store = config.clone();
+    config_for_store.auth_token = None;
     let store = app.store("config.json").map_err(|e| e.to_string())?;
-    store.set("config", serde_json::to_value(&config).map_err(|e| e.to_string())?);
+    store.set("config", serde_json::to_value(&config_for_store).map_err(|e| e.to_string())?);
     store.save().map_err(|e| e.to_string())?;
 
-    info!("✅ Configuration saved to local store");
+    info!("Configuration saved (token in keychain, config in store)");
 
     // Sync printers to PrinterManager so test_print works immediately
     {
@@ -375,15 +393,16 @@ async fn start_polling(
 
     let config = state.config.lock().await;
 
-    // Step 2: Check auth_token exists
-    if config.auth_token.is_none() {
+    // Step 2: Check auth_token exists (in-memory config or OS keyring fallback)
+    let auth_token = config.auth_token.clone().or_else(|| config::load_auth_token());
+    if auth_token.is_none() {
         return Err("No auth_token configured. Generate one from POS Devices page.".to_string());
     }
 
     let supabase_client = Arc::new(SupabaseClient::new(
         config.supabase_url.clone(),
         config.supabase_anon_key.clone(),
-        config.auth_token.clone(),
+        auth_token,
     ));
 
     // Gather printer_ids for heartbeat piggyback
@@ -783,16 +802,18 @@ fn setup_system_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::E
 
 /// Create a SupabaseClient from the current config, if possible.
 /// Returns None if restaurant_id or auth_token is missing.
+/// Falls back to OS keyring if auth_token is not in memory.
 fn create_supabase_client_from_config(cfg: &AppConfig) -> Option<SupabaseClient> {
     cfg.restaurant_id.as_ref()?;
-    if cfg.auth_token.is_none() {
+    let auth_token = cfg.auth_token.clone().or_else(|| config::load_auth_token());
+    if auth_token.is_none() {
         debug!("No auth_token configured, skipping Supabase client creation");
         return None;
     }
     Some(SupabaseClient::new(
         cfg.supabase_url.clone(),
         cfg.supabase_anon_key.clone(),
-        cfg.auth_token.clone(),
+        auth_token,
     ))
 }
 
@@ -910,7 +931,7 @@ async fn start_job_processor(
                                     &job.restaurant_id,
                                     job.order_id.as_deref(),
                                     Some(&used_printer),
-                                    None, // station_id is a UUID, job.station is name — skip for now
+                                    job.station_id.as_deref(),
                                     status::COMPLETED,
                                     None,
                                     Some(duration_ms),
@@ -963,7 +984,7 @@ async fn start_job_processor(
                                         &job.restaurant_id,
                                         job.order_id.as_deref(),
                                         Some(&printer_id),
-                                        None,
+                                        job.station_id.as_deref(),
                                         status::FAILED,
                                         Some(&e.to_string()),
                                         None,
@@ -1269,8 +1290,9 @@ async fn main() {
         .unwrap_or_else(|| "eatsome_printer_default".to_string());
     let jwt_manager = Arc::new(JWTManager::new(jwt_secret));
 
-    // Initialize circuit breaker registry
-    let circuit_breakers = Arc::new(CircuitBreakerRegistry::new());
+    // Initialize circuit breaker registry with status propagation channel
+    let (cb_registry, mut status_rx) = CircuitBreakerRegistry::new();
+    let circuit_breakers = Arc::new(cb_registry);
 
     // Initialize shutdown flag
     let shutdown_requested = Arc::new(AtomicBool::new(false));
@@ -1315,6 +1337,33 @@ async fn main() {
     // Start telemetry reporter (reports every 5 minutes)
     let reporter = TelemetryReporter::new(telemetry.clone());
     reporter.start_reporting(300).await;
+
+    // Start status propagation task: circuit breaker → Supabase → POS
+    {
+        let config_for_status = state.config.clone(); // Arc<Mutex<AppConfig>>, not default copy
+        tokio::spawn(async move {
+            loop {
+                if status_rx.changed().await.is_err() {
+                    break; // Channel closed
+                }
+                let (printer_id, status) = status_rx.borrow().clone();
+                if printer_id.is_empty() {
+                    continue; // Initial value, skip
+                }
+                info!("Circuit breaker status change: printer {} → {}", printer_id, status);
+
+                let cfg = config_for_status.lock().await;
+                let client = create_supabase_client_from_config(&cfg);
+                drop(cfg);
+
+                if let Some(client) = client {
+                    if let Err(e) = client.update_printer_status(&printer_id, &status).await {
+                        warn!("Failed to propagate printer status to Supabase: {}", e);
+                    }
+                }
+            }
+        });
+    }
 
     // Start HTTP API server (fallback)
     if let Some(restaurant_id) = &config.restaurant_id {
@@ -1370,11 +1419,41 @@ async fn main() {
                         let pm_arc = state.printer_manager.clone();
                         let loaded = loaded_config.clone();
 
+                        // Keyring migration: move auth_token from config.json → OS keychain
+                        if let Some(ref token) = loaded_config.auth_token {
+                            match config::store_auth_token(token) {
+                                Ok(_) => {
+                                    info!("Migrated auth_token to OS keychain");
+                                    // Clear token from config.json store
+                                    let mut migrated = loaded_config.clone();
+                                    migrated.auth_token = None;
+                                    if let Ok(val) = serde_json::to_value(&migrated) {
+                                        store.set("config", val);
+                                        let _ = store.save();
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Keyring migration failed (keeping in config): {}", e);
+                                }
+                            }
+                        }
+
                         // Apply stored config to the managed state (spawn, not block_on:
                         // setup runs inside the tokio runtime, so block_on would panic)
                         tauri::async_runtime::spawn(async move {
                             let mut config = config_arc.lock().await;
-                            *config = loaded.clone();
+                            // Load auth_token from keyring if not in config
+                            if loaded.auth_token.is_none() {
+                                if let Some(token) = config::load_auth_token() {
+                                    let mut loaded_with_token = loaded.clone();
+                                    loaded_with_token.auth_token = Some(token);
+                                    *config = loaded_with_token;
+                                } else {
+                                    *config = loaded.clone();
+                                }
+                            } else {
+                                *config = loaded.clone();
+                            }
                             drop(config);
 
                             let pm = pm_arc.lock().await;
