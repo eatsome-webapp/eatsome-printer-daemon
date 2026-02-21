@@ -59,11 +59,24 @@ interface QueueStats {
   failed: number
 }
 
-interface MainDashboardProps {
-  onReset: () => void
+interface UpdateInfo {
+  current_version: string
+  latest_version: string
 }
 
-export default function MainDashboard({ onReset }: MainDashboardProps) {
+interface MainDashboardProps {
+  onReset: () => void
+  updateAvailable: UpdateInfo | null
+  updateInstalling: boolean
+  onInstallUpdate: () => void
+}
+
+export default function MainDashboard({
+  onReset,
+  updateAvailable,
+  updateInstalling,
+  onInstallUpdate,
+}: MainDashboardProps) {
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [queueStats, setQueueStats] = useState<QueueStats | null>(null)
   const [uptime, setUptime] = useState<number>(0)
@@ -74,11 +87,6 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
   )
   const [removePrinterId, setRemovePrinterId] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [updateAvailable, setUpdateAvailable] = useState<{
-    current_version: string
-    latest_version: string
-  } | null>(null)
-  const [updateInstalling, setUpdateInstalling] = useState(false)
   const [updateChecking, setUpdateChecking] = useState(false)
   const [updateCheckResult, setUpdateCheckResult] = useState<'up-to-date' | 'error' | null>(null)
   const [showDiscovery, setShowDiscovery] = useState(false)
@@ -96,24 +104,9 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
       setQueueStats(event.payload)
     })
 
-    const unlistenUpdate = listen<{ current_version: string; latest_version: string }>(
-      'update-available',
-      (event) => {
-        setUpdateAvailable(event.payload)
-      }
-    )
-
-    const unlistenInstalling = listen('update-installing', () => {
-      setUpdateInstalling(true)
-    })
-
-    const unlistenInstalled = listen('update-installed', () => {
-      setUpdateInstalling(false)
-      setUpdateAvailable(null)
-    })
-
+    // Update error listener — only for displaying error messages
+    // (App.tsx manages update state; we just show errors here)
     const unlistenError = listen<string>('update-error', (event) => {
-      setUpdateInstalling(false)
       setErrorMessage(`Update mislukt: ${event.payload}`)
     })
 
@@ -126,9 +119,6 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
     return () => {
       clearInterval(interval)
       unlistenStats.then((fn) => fn())
-      unlistenUpdate.then((fn) => fn())
-      unlistenInstalling.then((fn) => fn())
-      unlistenInstalled.then((fn) => fn())
       unlistenError.then((fn) => fn())
     }
   }, [])
@@ -285,16 +275,6 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
     }
   }
 
-  async function handleInstallUpdate() {
-    try {
-      setUpdateInstalling(true)
-      await invoke('install_update')
-    } catch (error) {
-      setUpdateInstalling(false)
-      setErrorMessage(`Update mislukt: ${error}`)
-    }
-  }
-
   async function handleCheckForUpdates() {
     try {
       setUpdateChecking(true)
@@ -305,10 +285,8 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
         latest_version?: string
       }>('check_for_updates')
       if (result.available) {
-        setUpdateAvailable({
-          current_version: result.current_version,
-          latest_version: result.latest_version!,
-        })
+        // Update state is managed by App.tsx via Tauri event listeners
+        // (Rust emits 'update-available' event which App.tsx catches)
         setUpdateCheckResult(null)
       } else {
         setUpdateCheckResult('up-to-date')
@@ -373,33 +351,6 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
           <span>{errorMessage}</span>
           <button className="btn-close" onClick={() => setErrorMessage(null)}>
             <X size={14} />
-          </button>
-        </div>
-      )}
-
-      {/* Update Banner */}
-      {updateAvailable && (
-        <div className="update-banner">
-          <div className="update-banner-text">
-            <Download size={16} />
-            <span>
-              Versie {updateAvailable.latest_version} beschikbaar
-              <span className="update-current"> (huidig: {updateAvailable.current_version})</span>
-            </span>
-          </div>
-          <button
-            className="btn-sm btn-update"
-            onClick={handleInstallUpdate}
-            disabled={updateInstalling}
-          >
-            {updateInstalling ? (
-              <>
-                <Loader2 size={14} className="spin" />
-                Installeren...
-              </>
-            ) : (
-              'Nu updaten'
-            )}
           </button>
         </div>
       )}
@@ -557,7 +508,7 @@ export default function MainDashboard({ onReset }: MainDashboardProps) {
                   {updateAvailable ? (
                     <button
                       className="btn-sm btn-update"
-                      onClick={handleInstallUpdate}
+                      onClick={onInstallUpdate}
                       disabled={updateInstalling}
                     >
                       {updateInstalling ? (

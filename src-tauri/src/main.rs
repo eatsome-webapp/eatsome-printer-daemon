@@ -1340,6 +1340,15 @@ async fn main() {
 
     // Start Tauri application
     tauri::Builder::default()
+        // Single instance: prevent multiple windows, focus existing on re-launch
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+                info!("Second instance blocked — focused existing window");
+            }
+        }))
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state)

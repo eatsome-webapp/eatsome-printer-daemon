@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import SetupWizard from './components/SetupWizard'
 import MainDashboard from './components/MainDashboard'
 import ConfirmDialog from './components/ConfirmDialog'
@@ -14,10 +15,17 @@ interface AppConfig {
   printers: any[]
 }
 
+interface UpdateInfo {
+  current_version: string
+  latest_version: string
+}
+
 function App() {
   const [loading, setLoading] = useState(true)
   const [showWizard, setShowWizard] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
+  const [updateAvailable, setUpdateAvailable] = useState<UpdateInfo | null>(null)
+  const [updateInstalling, setUpdateInstalling] = useState(false)
 
   useEffect(() => {
     loadConfig()
@@ -27,7 +35,29 @@ function App() {
       e.preventDefault()
     }
     document.addEventListener('contextmenu', handleContextMenu)
-    return () => document.removeEventListener('contextmenu', handleContextMenu)
+
+    // Listen for update events (works in both wizard and dashboard)
+    const unlistenUpdate = listen<UpdateInfo>('update-available', (event) => {
+      setUpdateAvailable(event.payload)
+    })
+    const unlistenInstalling = listen('update-installing', () => {
+      setUpdateInstalling(true)
+    })
+    const unlistenInstalled = listen('update-installed', () => {
+      setUpdateInstalling(false)
+      setUpdateAvailable(null)
+    })
+    const unlistenError = listen('update-error', () => {
+      setUpdateInstalling(false)
+    })
+
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu)
+      unlistenUpdate.then((f) => f())
+      unlistenInstalling.then((f) => f())
+      unlistenInstalled.then((f) => f())
+      unlistenError.then((f) => f())
+    }
   }, [])
 
   async function loadConfig() {
@@ -94,9 +124,58 @@ function App() {
     }
   }
 
+  async function handleInstallUpdate() {
+    try {
+      setUpdateInstalling(true)
+      await invoke('install_update')
+    } catch (error) {
+      setUpdateInstalling(false)
+      console.error('Update failed:', error)
+    }
+  }
+
+  // Global update banner — renders above both wizard and dashboard
+  const updateBanner = updateAvailable && (
+    <div
+      style={{
+        background: 'linear-gradient(135deg, #FFD500 0%, #FFC700 100%)',
+        color: '#0A0A0A',
+        padding: '8px 16px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '12px',
+        fontSize: '13px',
+        fontWeight: 600,
+      }}
+    >
+      <span>
+        v{updateAvailable.latest_version} beschikbaar (huidig: v{updateAvailable.current_version})
+      </span>
+      <button
+        onClick={handleInstallUpdate}
+        disabled={updateInstalling}
+        style={{
+          background: '#0A0A0A',
+          color: '#FFD500',
+          border: 'none',
+          borderRadius: '6px',
+          padding: '4px 12px',
+          fontSize: '12px',
+          fontWeight: 700,
+          cursor: updateInstalling ? 'not-allowed' : 'pointer',
+          opacity: updateInstalling ? 0.6 : 1,
+        }}
+      >
+        {updateInstalling ? 'Installeren...' : 'Nu updaten'}
+      </button>
+    </div>
+  )
+
   if (loading) {
     return (
       <div className="dashboard-loading">
+        {updateBanner}
         <div className="spinner spinner-lg"></div>
         <p>Loading...</p>
       </div>
@@ -105,13 +184,24 @@ function App() {
 
   // Show setup wizard on first run or after reset
   if (showWizard) {
-    return <SetupWizard onComplete={handleWizardComplete} />
+    return (
+      <>
+        {updateBanner}
+        <SetupWizard onComplete={handleWizardComplete} />
+      </>
+    )
   }
 
-  // Show main dashboard
+  // Show main dashboard (dashboard has its own update UI, pass state down)
   return (
     <>
-      <MainDashboard onReset={handleReset} />
+      {updateBanner}
+      <MainDashboard
+        onReset={handleReset}
+        updateAvailable={updateAvailable}
+        updateInstalling={updateInstalling}
+        onInstallUpdate={handleInstallUpdate}
+      />
       {showResetConfirm && (
         <ConfirmDialog
           title="Reset & Reconfigure"
