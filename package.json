@@ -1,6 +1,6 @@
 {
   "name": "@eatsome/printer-daemon-tauri",
-  "version": "1.4.0",
+  "version": "1.6.0",
   "description": "Eatsome Printer Service - Tauri Edition",
   "private": true,
   "type": "module",

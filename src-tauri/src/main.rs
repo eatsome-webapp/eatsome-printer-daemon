@@ -89,6 +89,11 @@ pub struct AppState {
     start_time: Instant,
     /// Shutdown flag: when true, background tasks should drain and stop
     shutdown_requested: Arc<AtomicBool>,
+    /// Cached failover map: primary_printer_id → [backup_printer_ids]
+    /// Refreshed every 5 minutes from Supabase via poll-jobs response.
+    failover_map: Arc<Mutex<std::collections::HashMap<String, Vec<String>>>>,
+    /// App handle set during Tauri .setup() — shared with background tasks for event emission
+    app_handle: Arc<Mutex<Option<tauri::AppHandle>>>,
 }
 
 // ============================================================================
@@ -418,13 +423,14 @@ async fn start_polling(
         }
     }
 
-    // Start the job poller with printer_ids for heartbeat piggyback
+    // Start the job poller with printer_ids for heartbeat piggyback + failover config
     let queue = state.queue_manager.clone();
     let poller_handle = JobPoller::start(
         restaurant_id.clone(),
         supabase_client,
         queue,
         printer_ids,
+        state.failover_map.clone(),
     );
 
     let mut handle = state.job_poller_handle.lock().await;
@@ -825,6 +831,7 @@ async fn start_job_processor(
     circuit_breakers: Arc<CircuitBreakerRegistry>,
     config: Arc<Mutex<AppConfig>>,
     shutdown: Arc<AtomicBool>,
+    failover_map: Arc<Mutex<std::collections::HashMap<String, Vec<String>>>>,
 ) {
     info!("Starting background job processor (concurrency: 5, failover: enabled)");
     let semaphore = Arc::new(tokio::sync::Semaphore::new(5));
@@ -865,6 +872,7 @@ async fn start_job_processor(
                 let breakers = circuit_breakers.clone();
                 let permit = semaphore.clone();
                 let cfg = config.clone();
+                let failover = failover_map.clone();
 
                 tokio::spawn(async move {
                     // Acquire semaphore permit (limits concurrency to 5)
@@ -895,7 +903,7 @@ async fn start_job_processor(
                         let _ = client.update_job_status(&job_id, status::PRINTING, None, None).await;
                     }
 
-                    // Execute print with circuit breaker (120s total timeout)
+                    // Execute print with circuit breaker + failover (120s total timeout)
                     let result = tokio::time::timeout(
                         std::time::Duration::from_secs(120),
                         try_print_with_failover(
@@ -903,6 +911,8 @@ async fn start_job_processor(
                             &job,
                             &printer_mgr,
                             &breakers,
+                            &failover,
+                            &telem,
                         ),
                     ).await;
 
@@ -1012,8 +1022,85 @@ async fn start_job_processor(
 }
 
 /// Try printing on the specified printer with circuit breaker protection.
+/// On failure, attempts backup printers from the failover map.
 /// Returns the printer_id that successfully printed.
 async fn try_print_with_failover(
+    printer_id: &str,
+    job: &queue::PrintJob,
+    printer_manager: &Arc<Mutex<PrinterManager>>,
+    circuit_breakers: &Arc<CircuitBreakerRegistry>,
+    failover_map: &Arc<Mutex<std::collections::HashMap<String, Vec<String>>>>,
+    telemetry: &Arc<TelemetryCollector>,
+) -> errors::Result<String> {
+    // 1. Try primary printer
+    let primary_result = try_print_single(printer_id, job, printer_manager, circuit_breakers).await;
+    if primary_result.is_ok() {
+        return primary_result;
+    }
+    let primary_err = primary_result.unwrap_err();
+
+    // 2. Look up backup printers
+    let backups = {
+        let map = failover_map.lock().await;
+        map.get(printer_id).cloned().unwrap_or_default()
+    };
+
+    if backups.is_empty() {
+        warn!(
+            "Printer {} failed for job {} with no backups configured: {}",
+            printer_id, job.id, primary_err
+        );
+        return Err(primary_err);
+    }
+
+    // 3. Try each backup in order
+    info!(
+        "Primary printer {} failed, attempting {} backup(s) for job {}",
+        printer_id,
+        backups.len(),
+        job.id
+    );
+
+    let mut last_err = primary_err;
+    for backup_id in &backups {
+        info!("Trying backup printer {} for job {}", backup_id, job.id);
+        match try_print_single(backup_id, job, printer_manager, circuit_breakers).await {
+            Ok(used_id) => {
+                warn!(
+                    "Job {} printed via failover: {} → {}",
+                    job.id, printer_id, used_id
+                );
+                telemetry.record_event(telemetry::TelemetryEvent::FailoverAttempted {
+                    job_id: job.id.clone(),
+                    primary_printer_id: printer_id.to_string(),
+                    backup_printer_id: used_id.clone(),
+                    success: true,
+                }).await;
+                return Ok(used_id);
+            }
+            Err(e) => {
+                warn!("Backup printer {} also failed for job {}: {}", backup_id, job.id, e);
+                telemetry.record_event(telemetry::TelemetryEvent::FailoverAttempted {
+                    job_id: job.id.clone(),
+                    primary_printer_id: printer_id.to_string(),
+                    backup_printer_id: backup_id.clone(),
+                    success: false,
+                }).await;
+                last_err = e;
+            }
+        }
+    }
+
+    // 4. All printers failed
+    error!(
+        "All printers failed for job {} (primary: {}, backups: {:?})",
+        job.id, printer_id, backups
+    );
+    Err(last_err)
+}
+
+/// Try printing on a single printer with circuit breaker protection.
+async fn try_print_single(
     printer_id: &str,
     job: &queue::PrintJob,
     printer_manager: &Arc<Mutex<PrinterManager>>,
@@ -1126,13 +1213,149 @@ async fn start_printer_registration(
     });
 }
 
+/// Background task: Poll printer hardware status via DLE EOT every 30 seconds.
+///
+/// For each configured printer, sends DLE EOT commands to read paper/cover/error state.
+/// On status change: updates Supabase + emits Tauri event for the frontend.
+/// Requires 2 consecutive poll failures before marking offline (prevents flapping).
+async fn start_status_poller(
+    config: Arc<Mutex<AppConfig>>,
+    printer_manager: Arc<Mutex<PrinterManager>>,
+    app_handle: Arc<Mutex<Option<tauri::AppHandle>>>,
+    circuit_breakers: Arc<CircuitBreakerRegistry>,
+    telemetry: Arc<TelemetryCollector>,
+) {
+    info!("Starting DLE EOT hardware status poller (30s interval)");
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+        // Track last known status per printer for change detection
+        let mut last_status: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        // Track consecutive poll failures per printer (2 required before offline)
+        let mut poll_failures: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+
+        loop {
+            interval.tick().await;
+
+            let cfg = config.lock().await;
+            let auth_token = cfg.auth_token.clone();
+            let supabase_url = cfg.supabase_url.clone();
+            let anon_key = cfg.supabase_anon_key.clone();
+            let printer_configs = cfg.printers.clone();
+            drop(cfg);
+
+            if printer_configs.is_empty() || auth_token.is_none() {
+                continue;
+            }
+
+            let client = SupabaseClient::new(supabase_url, anon_key, auth_token);
+
+            for printer in &printer_configs {
+                // Briefly lock PrinterManager for each poll, then release
+                let poll_result = {
+                    let pm = printer_manager.lock().await;
+                    pm.poll_status(printer).await
+                };
+
+                match poll_result {
+                    Ok(hw_status) => {
+                        // Reset failure counter on successful poll
+                        poll_failures.remove(&printer.id);
+
+                        let new_status = hw_status.to_status_string().to_string();
+                        let prev_status = last_status.get(&printer.id);
+
+                        if prev_status.map_or(true, |prev| prev != &new_status) {
+                            let old_str = prev_status.unwrap_or(&"unknown".to_string()).clone();
+                            info!(
+                                "Printer {} status changed: {} → {}",
+                                printer.id, old_str, new_status
+                            );
+
+                            // Emit telemetry for status transition
+                            telemetry.record_event(telemetry::TelemetryEvent::PrinterStatusChanged {
+                                printer_id: printer.id.clone(),
+                                old_status: old_str,
+                                new_status: new_status.clone(),
+                            }).await;
+
+                            // Reset circuit breaker on recovery so jobs flow immediately
+                            if new_status == "online" {
+                                let breaker = circuit_breakers.get_breaker(&printer.id).await;
+                                breaker.reset().await;
+                                info!("Printer {} recovered — circuit breaker reset", printer.id);
+                            }
+
+                            // Update Supabase with detailed status (outside PM lock)
+                            if let Err(e) = client.update_printer_status_detailed(
+                                &printer.id,
+                                &new_status,
+                                &hw_status,
+                            ).await {
+                                warn!("Failed to update printer {} status in Supabase: {}", printer.id, e);
+                            }
+
+                            // Emit Tauri event for frontend
+                            if let Some(ref handle) = *app_handle.lock().await {
+                                let _ = handle.emit("printer-hw-status", serde_json::json!({
+                                    "printer_id": printer.id,
+                                    "status": new_status,
+                                    "hw_status": hw_status,
+                                }));
+                            }
+
+                            last_status.insert(printer.id.clone(), new_status);
+                        }
+                    }
+                    Err(e) => {
+                        let count = poll_failures.entry(printer.id.clone()).or_insert(0);
+                        *count += 1;
+
+                        if *count >= 2 {
+                            // 2 consecutive failures → consider offline
+                            let prev_status = last_status.get(&printer.id);
+                            if prev_status.map_or(true, |s| s != "offline") {
+                                let old_str = prev_status.cloned().unwrap_or_else(|| "unknown".to_string());
+                                warn!(
+                                    "Printer {} unreachable after {} consecutive poll failures: {}",
+                                    printer.id, count, e
+                                );
+                                telemetry.record_event(telemetry::TelemetryEvent::PrinterStatusChanged {
+                                    printer_id: printer.id.clone(),
+                                    old_status: old_str,
+                                    new_status: "offline".to_string(),
+                                }).await;
+                                if let Err(e) = client.update_printer_status(&printer.id, "offline").await {
+                                    warn!("Failed to mark printer {} offline in Supabase: {}", printer.id, e);
+                                }
+                                if let Some(ref handle) = *app_handle.lock().await {
+                                    let _ = handle.emit("printer-hw-status", serde_json::json!({
+                                        "printer_id": printer.id,
+                                        "status": "offline",
+                                    }));
+                                }
+                                last_status.insert(printer.id.clone(), "offline".to_string());
+                            }
+                        } else {
+                            debug!(
+                                "Printer {} poll failed ({}/2 before offline): {}",
+                                printer.id, count, e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// Start periodic queue metrics snapshot (every 30s) with Tauri event push
 async fn start_queue_metrics(
     queue_manager: Arc<Mutex<QueueManager>>,
     telemetry: Arc<TelemetryCollector>,
-    app_handle: Option<tauri::AppHandle>,
+    app_handle: Arc<Mutex<Option<tauri::AppHandle>>>,
 ) {
-    info!("Starting queue metrics snapshot (30s interval, events: {})", app_handle.is_some());
+    info!("Starting queue metrics snapshot (30s interval)");
 
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
@@ -1157,7 +1380,7 @@ async fn start_queue_metrics(
                 }).await;
 
                 // Push stats to frontend via Tauri events (real-time dashboard update)
-                if let Some(ref handle) = app_handle {
+                if let Some(ref handle) = *app_handle.lock().await {
                     let _ = handle.emit("queue-stats-updated", &stats);
                 }
             }
@@ -1298,6 +1521,8 @@ async fn main() {
     let shutdown_requested = Arc::new(AtomicBool::new(false));
 
     // Create application state
+    let failover_map = Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let shared_app_handle: Arc<Mutex<Option<tauri::AppHandle>>> = Arc::new(Mutex::new(None));
     let state = AppState {
         config: Arc::new(Mutex::new(config.clone())),
         printer_manager: Arc::new(Mutex::new(printer_manager)),
@@ -1308,6 +1533,8 @@ async fn main() {
         circuit_breakers: circuit_breakers.clone(),
         start_time: Instant::now(),
         shutdown_requested: shutdown_requested.clone(),
+        failover_map: failover_map.clone(),
+        app_handle: shared_app_handle.clone(),
     };
 
     // Start background tasks
@@ -1318,21 +1545,50 @@ async fn main() {
     let config_clone = state.config.clone();
     let shutdown_clone = shutdown_requested.clone();
 
+    let failover_clone = failover_map.clone();
     tokio::spawn(async move {
-        start_job_processor(queue_clone, printer_clone, telemetry_clone, breakers_clone, config_clone, shutdown_clone).await;
+        start_job_processor(queue_clone, printer_clone, telemetry_clone, breakers_clone, config_clone, shutdown_clone, failover_clone).await;
     });
 
     // Start cleanup task
     start_cleanup_task(state.queue_manager.clone()).await;
 
-    // Start periodic queue metrics snapshot (app_handle set later in setup)
-    start_queue_metrics(state.queue_manager.clone(), telemetry.clone(), None).await;
+    // Start periodic queue metrics snapshot (app_handle set during Tauri .setup())
+    start_queue_metrics(state.queue_manager.clone(), telemetry.clone(), shared_app_handle.clone()).await;
 
     // Register printers in Supabase (one-time upsert, heartbeats piggybacked on polls)
     start_printer_registration(
         state.config.clone(),
         telemetry.clone(),
     ).await;
+
+    // Start DLE EOT hardware status poller (30s interval, app_handle set during Tauri .setup())
+    start_status_poller(
+        state.config.clone(),
+        state.printer_manager.clone(),
+        shared_app_handle.clone(),
+        circuit_breakers.clone(),
+        telemetry.clone(),
+    ).await;
+
+    // Start TCP connection pool health checker (60s interval, 5min max idle)
+    {
+        let pm_for_pool = state.printer_manager.clone();
+        let telem_for_pool = telemetry.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let pm = pm_for_pool.lock().await;
+                let (stale_removed, active) = pm.cleanup_stale_connections(300).await; // 5 minutes max idle
+                drop(pm);
+                telem_for_pool.record_event(telemetry::TelemetryEvent::ConnectionPoolStats {
+                    active_connections: active,
+                    stale_removed,
+                }).await;
+            }
+        });
+    }
 
     // Start telemetry reporter (reports every 5 minutes)
     let reporter = TelemetryReporter::new(telemetry.clone());
@@ -1406,6 +1662,17 @@ async fn main() {
         ))
         .manage(state)
         .setup(|app| {
+            // Set app_handle so background tasks can emit Tauri events
+            {
+                let state = app.state::<AppState>();
+                let app_handle_arc = state.app_handle.clone();
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    *app_handle_arc.lock().await = Some(handle);
+                    info!("AppHandle set — background tasks can now emit Tauri events");
+                });
+            }
+
             // Load config from store and apply to managed state
             let store = app.store("config.json")?;
             if let Some(stored_config) = store.get("config") {

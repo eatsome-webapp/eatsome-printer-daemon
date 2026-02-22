@@ -7,6 +7,40 @@ const GS: u8 = 0x1d;
 const LF: u8 = 0x0a;
 const CR: u8 = 0x0d;
 
+/// DLE EOT Real-time status request: 0x10 0x04 n
+/// These commands are processed immediately by the printer (not buffered).
+const DLE: u8 = 0x10;
+const EOT: u8 = 0x04;
+
+/// DLE EOT status request types
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+pub enum StatusRequest {
+    /// Basic printer status (online/offline)
+    Printer = 1,
+    /// Offline cause (cover open, feed button pressed, error)
+    OfflineCause = 2,
+    /// Error cause (auto-cutter error, unrecoverable)
+    ErrorCause = 3,
+    /// Paper sensor status (near-end, paper-end)
+    PaperSensor = 4,
+}
+
+/// Build a DLE EOT real-time status request command
+pub fn build_status_request(request: StatusRequest) -> Vec<u8> {
+    vec![DLE, EOT, request as u8]
+}
+
+/// Build all 4 DLE EOT status requests concatenated into a single write
+pub fn build_full_status_request() -> Vec<u8> {
+    vec![
+        DLE, EOT, StatusRequest::Printer as u8,
+        DLE, EOT, StatusRequest::OfflineCause as u8,
+        DLE, EOT, StatusRequest::ErrorCause as u8,
+        DLE, EOT, StatusRequest::PaperSensor as u8,
+    ]
+}
+
 /// Paper width configuration
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum PaperWidth {

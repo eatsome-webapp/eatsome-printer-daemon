@@ -1,14 +1,25 @@
 use crate::config::{ConnectionType, PrinterConfig};
 use crate::discovery::{self, DiscoveredPrinter};
 use crate::errors::{DaemonError, Result};
-use crate::escpos::{format_kitchen_receipt, format_test_print, PaperWidth};
+use crate::escpos::{build_full_status_request, format_kitchen_receipt, format_test_print, PaperWidth};
 use crate::queue::PrintJob;
+use crate::status::PrinterHwStatus;
 use rusb::{Context, Device, DeviceDescriptor, UsbContext};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
+
+/// A persistent TCP connection to a network printer.
+struct NetworkConnection {
+    stream: TcpStream,
+    address: String,
+    connected_at: Instant,
+    last_used: Instant,
+    consecutive_failures: u32,
+}
 
 /// Known thermal printer vendor IDs
 const VENDOR_IDS: &[(u16, &str)] = &[
@@ -26,8 +37,10 @@ const DISCOVERY_CACHE_TTL_SECS: u64 = 30;
 pub struct PrinterManager {
     printers: Arc<Mutex<HashMap<String, PrinterConfig>>>,
     usb_context: Context,
-    online_cache: Arc<Mutex<HashMap<String, (bool, std::time::Instant)>>>,
-    discovery_cache: Arc<Mutex<(Vec<serde_json::Value>, Option<std::time::Instant>)>>,
+    online_cache: Arc<Mutex<HashMap<String, (bool, Instant)>>>,
+    discovery_cache: Arc<Mutex<(Vec<serde_json::Value>, Option<Instant>)>>,
+    /// Persistent TCP connection pool: address → NetworkConnection
+    network_pool: Arc<Mutex<HashMap<String, NetworkConnection>>>,
 }
 
 impl PrinterManager {
@@ -42,6 +55,7 @@ impl PrinterManager {
             usb_context,
             online_cache: Arc::new(Mutex::new(HashMap::new())),
             discovery_cache: Arc::new(Mutex::new((Vec::new(), None))),
+            network_pool: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -334,17 +348,64 @@ impl PrinterManager {
         Err(DaemonError::PrinterNotFound(address.to_string()))
     }
 
-    /// Print via network (raw TCP port 9100) with timeouts
+    /// Print via network (raw TCP port 9100) with persistent connection pool.
     ///
-    /// Applies per-operation timeouts to prevent hanging when the network drops:
-    /// - Connect: 5 seconds
-    /// - Write: 20 seconds (large receipts may take time)
-    /// - Flush: 5 seconds
+    /// Connection pool strategy:
+    /// 1. Check pool for existing connection to this address
+    /// 2. If found: attempt write (reuse connection)
+    /// 3. If write fails: remove from pool, create new connection, retry once
+    /// 4. If not found: create new connection, add to pool after successful write
+    ///
+    /// Timeouts: Connect 5s, Write 20s, Flush 5s
     async fn print_network(&self, address: &str, data: &[u8]) -> Result<()> {
         use tokio::io::AsyncWriteExt;
-        use tokio::net::TcpStream;
 
-        // Connect with 5s timeout
+        // Try to reuse a pooled connection
+        let mut pooled_stream = {
+            let mut pool = self.network_pool.lock().await;
+            pool.remove(address)
+        };
+
+        if let Some(mut conn) = pooled_stream.take() {
+            debug!("Reusing pooled connection to {} (age: {:?})", address, conn.connected_at.elapsed());
+
+            // Attempt write on existing connection
+            let write_result = tokio::time::timeout(
+                Duration::from_secs(20),
+                conn.stream.write_all(data),
+            ).await;
+
+            match write_result {
+                Ok(Ok(())) => {
+                    // Flush
+                    let flush_result = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        conn.stream.flush(),
+                    ).await;
+
+                    match flush_result {
+                        Ok(Ok(())) => {
+                            // Success — return connection to pool
+                            conn.last_used = Instant::now();
+                            conn.consecutive_failures = 0;
+                            let mut pool = self.network_pool.lock().await;
+                            pool.insert(address.to_string(), conn);
+                            return Ok(());
+                        }
+                        _ => {
+                            debug!("Flush failed on pooled connection to {}, reconnecting", address);
+                            // Fall through to create new connection
+                        }
+                    }
+                }
+                _ => {
+                    debug!("Write failed on pooled connection to {}, reconnecting", address);
+                    // Fall through to create new connection
+                }
+            }
+        }
+
+        // Create new connection (either no pooled connection or reuse failed)
         let mut stream = tokio::time::timeout(
             Duration::from_secs(5),
             TcpStream::connect(address),
@@ -352,6 +413,9 @@ impl PrinterManager {
         .await
         .map_err(|_| DaemonError::Network(format!("Connection timed out to {}", address)))?
         .map_err(|e| DaemonError::Network(e.to_string()))?;
+
+        // Set TCP keepalive on new connections
+        Self::set_tcp_keepalive(&stream);
 
         // Write with 20s timeout
         tokio::time::timeout(
@@ -371,7 +435,83 @@ impl PrinterManager {
         .map_err(|_| DaemonError::Network(format!("Flush timed out to {}", address)))?
         .map_err(|e| DaemonError::Network(e.to_string()))?;
 
+        // Add to pool after successful write
+        let now = Instant::now();
+        let conn = NetworkConnection {
+            stream,
+            address: address.to_string(),
+            connected_at: now,
+            last_used: now,
+            consecutive_failures: 0,
+        };
+        let mut pool = self.network_pool.lock().await;
+        pool.insert(address.to_string(), conn);
+        debug!("Added new connection to pool for {} (pool size: {})", address, pool.len());
+
         Ok(())
+    }
+
+    /// Configure TCP keepalive on a tokio TcpStream to detect dead connections.
+    /// Keepalive: idle 30s, interval 10s. Uses socket2 via raw fd/socket.
+    #[cfg(unix)]
+    fn set_tcp_keepalive(stream: &TcpStream) {
+        use std::os::unix::io::{AsRawFd, FromRawFd};
+
+        let keepalive = socket2::TcpKeepalive::new()
+            .with_time(Duration::from_secs(30))
+            .with_interval(Duration::from_secs(10));
+
+        // Borrow the raw fd without taking ownership
+        let fd = stream.as_raw_fd();
+        // Safety: we use from_raw_fd + forget to avoid double-close
+        let socket = unsafe { socket2::Socket::from_raw_fd(fd) };
+
+        if let Err(e) = socket.set_tcp_keepalive(&keepalive) {
+            debug!("Failed to set TCP keepalive: {} (non-fatal)", e);
+        }
+
+        // Don't drop — tokio still owns the fd
+        std::mem::forget(socket);
+    }
+
+    /// Configure TCP keepalive (Windows variant)
+    #[cfg(windows)]
+    fn set_tcp_keepalive(stream: &TcpStream) {
+        use std::os::windows::io::{AsRawSocket, FromRawSocket};
+
+        let keepalive = socket2::TcpKeepalive::new()
+            .with_time(Duration::from_secs(30))
+            .with_interval(Duration::from_secs(10));
+
+        let raw = stream.as_raw_socket();
+        let socket = unsafe { socket2::Socket::from_raw_socket(raw) };
+
+        if let Err(e) = socket.set_tcp_keepalive(&keepalive) {
+            debug!("Failed to set TCP keepalive: {} (non-fatal)", e);
+        }
+
+        std::mem::forget(socket);
+    }
+
+    /// Remove stale connections from the pool (idle > max_idle_secs).
+    /// Called by background health checker in main.rs.
+    /// Returns `(stale_removed, active_remaining)` for telemetry.
+    pub async fn cleanup_stale_connections(&self, max_idle_secs: u64) -> (usize, usize) {
+        let mut pool = self.network_pool.lock().await;
+        let before = pool.len();
+        pool.retain(|addr, conn| {
+            let idle = conn.last_used.elapsed().as_secs() > max_idle_secs;
+            if idle {
+                debug!("Removing stale connection to {} (idle {:?})", addr, conn.last_used.elapsed());
+            }
+            !idle
+        });
+        let removed = before - pool.len();
+        let active = pool.len();
+        if removed > 0 {
+            info!("Cleaned up {} stale connections (pool: {} → {})", removed, before, active);
+        }
+        (removed, active)
     }
 
     /// Print via Bluetooth BLE
@@ -604,4 +744,200 @@ impl PrinterManager {
         debug!("Printer {} online status: {}", printer_id, is_online);
         is_online
     }
+
+    // =========================================================================
+    // DLE EOT Real-time Status Polling
+    // =========================================================================
+
+    /// Poll printer hardware status via DLE EOT commands.
+    /// Returns structured status for network and USB printers.
+    /// BLE printers return a healthy default (DLE EOT not reliably supported over BLE).
+    pub async fn poll_status(&self, printer: &PrinterConfig) -> Result<PrinterHwStatus> {
+        match printer.connection_type {
+            ConnectionType::Network => self.poll_status_network(&printer.address).await,
+            ConnectionType::USB => {
+                // USB I/O is synchronous (rusb) — run on blocking thread pool
+                // to avoid stalling the tokio async runtime
+                let usb_ctx = self.usb_context.clone();
+                let address = printer.address.clone();
+                tokio::task::spawn_blocking(move || {
+                    poll_status_usb_blocking(&usb_ctx, &address)
+                })
+                .await
+                .map_err(|e| DaemonError::Other(anyhow::anyhow!("USB poll task failed: {}", e)))?
+            }
+            ConnectionType::Bluetooth => {
+                debug!("Skipping DLE EOT status poll for BLE printer {}", printer.id);
+                Ok(PrinterHwStatus::healthy())
+            }
+        }
+    }
+
+    /// Poll status via TCP: send all 4 DLE EOT requests, read 4-byte response.
+    /// Reuses persistent connection pool when available; falls back to ephemeral connection.
+    async fn poll_status_network(&self, address: &str) -> Result<PrinterHwStatus> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let request = build_full_status_request();
+
+        // Try to reuse a pooled connection first
+        let mut pooled_conn = {
+            let mut pool = self.network_pool.lock().await;
+            pool.remove(address)
+        };
+
+        if let Some(mut conn) = pooled_conn.take() {
+            debug!("Status poll reusing pooled connection to {}", address);
+
+            let poll_result = async {
+                tokio::time::timeout(Duration::from_secs(2), conn.stream.write_all(&request))
+                    .await
+                    .map_err(|_| DaemonError::Network(format!("Status poll write timed out to {}", address)))?
+                    .map_err(|e| DaemonError::Network(e.to_string()))?;
+
+                let mut response = [0u8; 4];
+                tokio::time::timeout(Duration::from_secs(2), conn.stream.read_exact(&mut response))
+                    .await
+                    .map_err(|_| DaemonError::Network(format!("Status poll read timed out from {}", address)))?
+                    .map_err(|e| DaemonError::Network(e.to_string()))?;
+
+                Ok::<_, DaemonError>(response)
+            }.await;
+
+            match poll_result {
+                Ok(response) => {
+                    // Success — return connection to pool with updated timestamp
+                    conn.last_used = Instant::now();
+                    let mut pool = self.network_pool.lock().await;
+                    pool.insert(address.to_string(), conn);
+                    return Ok(PrinterHwStatus::from_dle_eot(
+                        response[0], response[1], response[2], response[3],
+                    ));
+                }
+                Err(e) => {
+                    // Stale connection — drop it, fall through to ephemeral
+                    debug!("Pooled connection to {} failed during status poll, using ephemeral: {}", address, e);
+                }
+            }
+        }
+
+        // No pooled connection or pooled failed — create ephemeral (don't pool status-only connections)
+        let mut stream = tokio::time::timeout(
+            Duration::from_secs(2),
+            TcpStream::connect(address),
+        )
+        .await
+        .map_err(|_| DaemonError::Network(format!("Status poll connect timed out to {}", address)))?
+        .map_err(|e| DaemonError::Network(format!("Status poll connect failed to {}: {}", address, e)))?;
+
+        tokio::time::timeout(Duration::from_secs(2), stream.write_all(&request))
+            .await
+            .map_err(|_| DaemonError::Network(format!("Status poll write timed out to {}", address)))?
+            .map_err(|e| DaemonError::Network(e.to_string()))?;
+
+        let mut response = [0u8; 4];
+        tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut response))
+            .await
+            .map_err(|_| DaemonError::Network(format!("Status poll read timed out from {}", address)))?
+            .map_err(|e| DaemonError::Network(format!("Status poll read failed from {}: {}", address, e)))?;
+
+        Ok(PrinterHwStatus::from_dle_eot(
+            response[0], response[1], response[2], response[3],
+        ))
+    }
+
+    /// Get a snapshot of all configured printers (for status polling)
+    pub async fn get_all_printers(&self) -> Vec<PrinterConfig> {
+        let printers = self.printers.lock().await;
+        printers.values().cloned().collect()
+    }
+}
+
+/// Poll printer status via USB (standalone, runs on blocking thread pool).
+/// Extracted from PrinterManager so it can be called from spawn_blocking.
+fn poll_status_usb_blocking(usb_context: &Context, address: &str) -> Result<PrinterHwStatus> {
+    let request = build_full_status_request();
+
+    // Parse vendor:product from address (e.g., "usb_04b8_0e15")
+    let parts: Vec<&str> = address.split('_').collect();
+    if parts.len() < 3 {
+        return Err(DaemonError::PrinterNotFound(format!(
+            "Invalid USB address format for status poll: {}", address
+        )));
+    }
+
+    let vendor_id = u16::from_str_radix(parts[1], 16)
+        .map_err(|_| DaemonError::PrinterNotFound(format!("Invalid vendor ID: {}", parts[1])))?;
+    let product_id = u16::from_str_radix(parts[2], 16)
+        .map_err(|_| DaemonError::PrinterNotFound(format!("Invalid product ID: {}", parts[2])))?;
+
+    let devices = usb_context.devices()
+        .map_err(DaemonError::Usb)?;
+
+    for device in devices.iter() {
+        if let Ok(desc) = device.device_descriptor() {
+            if desc.vendor_id() == vendor_id && desc.product_id() == product_id {
+                let handle = device.open()
+                    .map_err(DaemonError::Usb)?;
+
+                // Find bulk OUT and IN endpoints
+                let config = device.active_config_descriptor()
+                    .map_err(DaemonError::Usb)?;
+
+                let mut out_ep = None;
+                let mut in_ep = None;
+
+                for interface in config.interfaces() {
+                    for iface_desc in interface.descriptors() {
+                        for ep in iface_desc.endpoint_descriptors() {
+                            match ep.direction() {
+                                rusb::Direction::Out if out_ep.is_none() => {
+                                    out_ep = Some(ep.address());
+                                }
+                                rusb::Direction::In if in_ep.is_none() => {
+                                    in_ep = Some(ep.address());
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                let out_ep = out_ep.ok_or_else(|| {
+                    DaemonError::PrintJob("No USB OUT endpoint found for status poll".to_string())
+                })?;
+                let in_ep = in_ep.ok_or_else(|| {
+                    DaemonError::PrintJob("No USB IN endpoint found for status poll".to_string())
+                })?;
+
+                // Claim interface 0
+                let _ = handle.set_auto_detach_kernel_driver(true);
+                handle.claim_interface(0)
+                    .map_err(DaemonError::Usb)?;
+
+                // Write DLE EOT requests
+                handle.write_bulk(out_ep, &request, Duration::from_secs(2))
+                    .map_err(DaemonError::Usb)?;
+
+                // Read response
+                let mut response = [0u8; 4];
+                handle.read_bulk(in_ep, &mut response, Duration::from_secs(2))
+                    .map_err(DaemonError::Usb)?;
+
+                handle.release_interface(0)
+                    .map_err(DaemonError::Usb)?;
+
+                return Ok(PrinterHwStatus::from_dle_eot(
+                    response[0],
+                    response[1],
+                    response[2],
+                    response[3],
+                ));
+            }
+        }
+    }
+
+    Err(DaemonError::PrinterNotFound(format!(
+        "USB device not found for status poll: {}", address
+    )))
 }

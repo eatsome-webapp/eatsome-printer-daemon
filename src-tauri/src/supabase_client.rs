@@ -24,6 +24,13 @@ pub struct SupabaseClient {
     auth_token: Option<String>,
 }
 
+/// Result from polling for pending jobs, with optional failover config
+pub struct PollResult {
+    pub jobs: Vec<serde_json::Value>,
+    /// Map of primary_printer_id → [backup_printer_ids], refreshed periodically
+    pub failover_config: Option<std::collections::HashMap<String, Vec<String>>>,
+}
+
 impl SupabaseClient {
     /// Create a new dual-mode Supabase client
     ///
@@ -355,13 +362,65 @@ impl SupabaseClient {
         Ok(())
     }
 
-    /// Poll for pending print jobs via Edge Function.
-    /// If `printer_ids` is non-empty, piggybacks a heartbeat update
-    /// (last_seen + status='online') on the same call.
+    /// Update a printer's status with detailed hardware info from DLE EOT polling.
+    /// Sends the status string plus optional detail fields for richer diagnostics.
+    pub async fn update_printer_status_detailed(
+        &self,
+        printer_id: &str,
+        status: &str,
+        hw_status: &crate::status::PrinterHwStatus,
+    ) -> Result<()> {
+        debug!("Updating printer {} status to '{}' (detailed: {:?})", printer_id, status, hw_status);
+
+        let error_details: Option<&str> = if hw_status.cutter_error {
+            Some("cutter_error")
+        } else if hw_status.error {
+            Some("general_error")
+        } else {
+            None
+        };
+
+        let paper_status = if !hw_status.paper_present { "out" }
+            else if hw_status.paper_near_end { "low" }
+            else { "ok" };
+
+        let cover_status = if hw_status.cover_open { "open" } else { "closed" };
+
+        self.edge_call("update-printer-status", json!({
+            "printer_id": printer_id,
+            "status": status,
+            "paper_status": paper_status,
+            "cover_status": cover_status,
+            "error_details": error_details,
+        })).await?;
+
+        info!("Printer {} status updated to '{}' (detailed)", printer_id, status);
+        Ok(())
+    }
+
+    /// Poll for pending print jobs via Edge Function (without failover config).
+    /// If `printer_ids` is non-empty, piggybacks a heartbeat update.
+    /// Prefer `poll_pending_jobs_with_failover()` for full functionality.
+    #[allow(dead_code)]
     pub async fn poll_pending_jobs(&self, printer_ids: &[String]) -> Result<Vec<serde_json::Value>> {
+        let result = self.poll_pending_jobs_with_failover(printer_ids, false).await?;
+        Ok(result.jobs)
+    }
+
+    /// Poll for pending jobs, optionally including failover config.
+    /// When `include_failover` is true, the response includes a failover_config map
+    /// of primary_printer_id → [backup_printer_ids].
+    pub async fn poll_pending_jobs_with_failover(
+        &self,
+        printer_ids: &[String],
+        include_failover: bool,
+    ) -> Result<PollResult> {
         let mut payload = json!({});
         if !printer_ids.is_empty() {
             payload["printer_ids"] = json!(printer_ids);
+        }
+        if include_failover {
+            payload["include_failover_config"] = json!(true);
         }
 
         let result = self.edge_call("poll-jobs", payload).await?;
@@ -372,7 +431,24 @@ impl SupabaseClient {
             .cloned()
             .unwrap_or_default();
 
-        Ok(jobs)
+        // Parse failover config if present
+        let failover_config = result.get("failover_config").and_then(|v| {
+            v.as_object().map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| {
+                        v.as_array().map(|arr| {
+                            let backups: Vec<String> = arr
+                                .iter()
+                                .filter_map(|s| s.as_str().map(|s| s.to_string()))
+                                .collect();
+                            (k.clone(), backups)
+                        })
+                    })
+                    .collect()
+            })
+        });
+
+        Ok(PollResult { jobs, failover_config })
     }
 }
 

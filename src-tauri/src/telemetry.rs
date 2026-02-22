@@ -44,6 +44,18 @@ pub enum TelemetryEvent {
         old_status: String,
         new_status: String,
     },
+    /// Failover attempted: primary failed, backup tried
+    FailoverAttempted {
+        job_id: String,
+        primary_printer_id: String,
+        backup_printer_id: String,
+        success: bool,
+    },
+    /// Connection pool health statistics
+    ConnectionPoolStats {
+        active_connections: usize,
+        stale_removed: usize,
+    },
     /// Queue statistics snapshot
     QueueSnapshot {
         pending: usize,
@@ -190,6 +202,25 @@ impl TelemetryCollector {
                     metrics.circuit_breakers_open = metrics.circuit_breakers_open.saturating_sub(1);
                 }
                 debug!("Circuit breakers open: {}", metrics.circuit_breakers_open);
+            }
+            TelemetryEvent::PrinterStatusChanged { printer_id, old_status, new_status } => {
+                debug!("Printer {} status: {} → {}", printer_id, old_status, new_status);
+            }
+            TelemetryEvent::FailoverAttempted { job_id, primary_printer_id, backup_printer_id, success } => {
+                if *success {
+                    info!(
+                        "Failover succeeded: job {} routed {} → {}",
+                        job_id, primary_printer_id, backup_printer_id
+                    );
+                } else {
+                    debug!(
+                        "Failover attempted: job {} tried {} → {} (failed)",
+                        job_id, primary_printer_id, backup_printer_id
+                    );
+                }
+            }
+            TelemetryEvent::ConnectionPoolStats { active_connections, stale_removed } => {
+                debug!("Connection pool: {} active, {} stale removed", active_connections, stale_removed);
             }
             _ => {}
         }
